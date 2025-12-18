@@ -25,6 +25,8 @@ const VideoCall = () => {
     const [start, setStart] = useState(false);
     const [localTracks, setLocalTracks] = useState([]); // [audioTrack, videoTrack]
     const [error, setError] = useState(null);
+    const [showDebug, setShowDebug] = useState(false);
+    const [connectionState, setConnectionState] = useState('DISCONNECTED');
 
     // Controls
     const [trackState, setTrackState] = useState({ video: true, audio: true });
@@ -35,28 +37,50 @@ const VideoCall = () => {
     // Event handlers (defined first to be used in setupEventListeners)
     const handleUserPublished = async (user, mediaType) => {
         try {
-            console.log("User published:", user.uid, mediaType);
+            console.log("📹 User published:", user.uid, mediaType);
+            console.log("   User object:", {
+                uid: user.uid,
+                hasVideoTrack: !!user.videoTrack,
+                hasAudioTrack: !!user.audioTrack
+            });
+            
             await clientRef.current.subscribe(user, mediaType);
-            console.log("Subscribe success", mediaType, "for user", user.uid);
+            console.log("✅ Subscribe success", mediaType, "for user", user.uid);
 
             if (mediaType === "video") {
-                setUsers((prevUsers) => {
-                    // Avoid duplicates
-                    if (prevUsers.find(u => u.uid === user.uid)) {
-                        console.log("User already in list:", user.uid);
-                        return prevUsers;
-                    }
-                    console.log("Adding user to list:", user.uid);
-                    return [...prevUsers, user];
-                });
+                // Wait a bit to ensure track is ready
+                setTimeout(() => {
+                    setUsers((prevUsers) => {
+                        // Avoid duplicates
+                        if (prevUsers.find(u => u.uid === user.uid)) {
+                            console.log("⚠️ User already in list:", user.uid);
+                            return prevUsers;
+                        }
+                        console.log("➕ Adding user to list:", user.uid);
+                        console.log("   User video track:", user.videoTrack);
+                        return [...prevUsers, user];
+                    });
+                }, 100);
             }
 
             if (mediaType === "audio") {
-                user.audioTrack.play();
-                console.log("Playing audio for user:", user.uid);
+                if (user.audioTrack) {
+                    user.audioTrack.play().catch(err => {
+                        console.error("Failed to play audio:", err);
+                    });
+                    console.log("🔊 Playing audio for user:", user.uid);
+                } else {
+                    console.warn("No audio track for user:", user.uid);
+                }
             }
         } catch (error) {
-            console.error("Failed to subscribe to user", error);
+            console.error("❌ Failed to subscribe to user", error);
+            console.error("   Error details:", {
+                uid: user.uid,
+                mediaType,
+                error: error.message,
+                stack: error.stack
+            });
         }
     };
 
@@ -90,10 +114,25 @@ const VideoCall = () => {
         // Additional debugging events
         client.on("user-joined", (user) => {
             console.log("👤 User joined channel:", user.uid);
+            console.log("   Channel:", channelName);
+        });
+        
+        client.on("user-published", (user, mediaType) => {
+            console.log("📡 user-published event:", user.uid, mediaType);
         });
         
         client.on("exception", (evt) => {
-            console.error("Agora exception:", evt);
+            console.error("⚠️ Agora exception:", evt);
+            // Don't show audio level warnings as errors
+            if (evt.code !== 4001) {
+                console.error("   Exception code:", evt.code, "msg:", evt.msg);
+            }
+        });
+        
+        // Log connection state changes
+        client.on("connection-state-change", (curState, revState) => {
+            console.log("🔄 Connection state changed:", revState, "->", curState);
+            setConnectionState(curState);
         });
     };
 
@@ -170,7 +209,46 @@ const VideoCall = () => {
             setStart(true);
             setError(null);
             console.log("✅ Published local tracks successfully!");
-            console.log("   Waiting for remote users to join...");
+            console.log("   Local UID:", uid);
+            console.log("   Channel:", channelName);
+            
+            // Check for existing remote users and subscribe to them
+            const remoteUsers = client.remoteUsers;
+            console.log("   Current remote users count:", remoteUsers.length);
+            
+            if (remoteUsers.length > 0) {
+                console.log("   Found existing remote users, subscribing...");
+                for (const remoteUser of remoteUsers) {
+                    try {
+                        // Subscribe to video if available
+                        if (remoteUser.hasVideo) {
+                            await clientRef.current.subscribe(remoteUser, "video");
+                            console.log("   ✅ Subscribed to video for user:", remoteUser.uid);
+                            setUsers(prev => {
+                                if (prev.find(u => u.uid === remoteUser.uid)) {
+                                    return prev;
+                                }
+                                return [...prev, remoteUser];
+                            });
+                        }
+                        
+                        // Subscribe to audio if available
+                        if (remoteUser.hasAudio) {
+                            await clientRef.current.subscribe(remoteUser, "audio");
+                            if (remoteUser.audioTrack) {
+                                remoteUser.audioTrack.play().catch(err => {
+                                    console.error("Failed to play audio:", err);
+                                });
+                            }
+                            console.log("   ✅ Subscribed to audio for user:", remoteUser.uid);
+                        }
+                    } catch (err) {
+                        console.error("   ❌ Failed to subscribe to existing user:", remoteUser.uid, err);
+                    }
+                }
+            } else {
+                console.log("   Waiting for remote users to join...");
+            }
         } catch (error) {
             console.error("Failed to join channel", error);
             setError(`Failed to join channel: ${error.message || error}`);
@@ -236,6 +314,13 @@ const VideoCall = () => {
                         <div className="w-2 h-2 rounded-full bg-green-400"></div>
                         <span>{users.length + 1} {users.length === 0 ? 'Participant' : 'Participants'}</span>
                     </div>
+                    <button
+                        onClick={() => setShowDebug(!showDebug)}
+                        className="text-white text-xs px-2 py-1 bg-black/30 rounded hover:bg-black/50"
+                        title="Toggle Debug Info"
+                    >
+                        {showDebug ? 'Hide' : 'Show'} Debug
+                    </button>
                 </div>
             </div>
 
@@ -249,6 +334,29 @@ const VideoCall = () => {
                         <div>
                             <strong>Error:</strong> {error}
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Debug Panel */}
+            {showDebug && (
+                <div className="absolute top-20 right-4 z-50 rounded-lg bg-black/80 backdrop-blur-sm border border-white/20 px-4 py-3 text-xs text-white shadow-2xl max-w-xs">
+                    <div className="space-y-2">
+                        <div className="font-bold text-sm mb-2 border-b border-white/20 pb-2">Debug Info</div>
+                        <div><strong>Channel:</strong> {channelName}</div>
+                        <div><strong>Connection:</strong> {connectionState}</div>
+                        <div><strong>Remote Users:</strong> {users.length}</div>
+                        <div><strong>Local Published:</strong> {start ? 'Yes' : 'No'}</div>
+                        {users.length > 0 && (
+                            <div className="mt-2 pt-2 border-t border-white/20">
+                                <div className="font-semibold">Remote Users:</div>
+                                {users.map(u => (
+                                    <div key={u.uid} className="ml-2">
+                                        UID: {u.uid}, Video: {u.videoTrack ? 'Yes' : 'No'}, Audio: {u.audioTrack ? 'Yes' : 'No'}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
