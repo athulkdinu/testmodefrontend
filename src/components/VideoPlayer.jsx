@@ -16,16 +16,27 @@ const VideoPlayer = ({ user, style }) => {
             console.log('VideoPlayer - Track state:', {
                 isPlaying: videoTrack.isPlaying,
                 muted: videoTrack.muted,
-                enabled: videoTrack.enabled
+                enabled: videoTrack.enabled,
+                trackId: videoTrack.trackId
             });
 
             // Function to check if video is actually playing
             const checkVideoPlaying = () => {
-                if (videoElement && videoElement.readyState >= 2) { // HAVE_CURRENT_DATA or higher
-                    console.log('✅ VideoPlayer - Video element is ready for user:', user.uid);
-                    setHasVideo(true);
-                    setError(null);
-                    return true;
+                if (videoElement) {
+                    // Check multiple conditions
+                    const hasData = videoElement.readyState >= 2; // HAVE_CURRENT_DATA or higher
+                    const isPlaying = !videoElement.paused && videoElement.currentTime > 0;
+                    
+                    if (hasData || isPlaying) {
+                        console.log('✅ VideoPlayer - Video element is ready for user:', user.uid, {
+                            readyState: videoElement.readyState,
+                            paused: videoElement.paused,
+                            currentTime: videoElement.currentTime
+                        });
+                        setHasVideo(true);
+                        setError(null);
+                        return true;
+                    }
                 }
                 return false;
             };
@@ -43,6 +54,12 @@ const VideoPlayer = ({ user, style }) => {
                 setError(null);
             };
 
+            const handleLoadedData = () => {
+                console.log('✅ VideoPlayer - Video loaded data for user:', user.uid);
+                setHasVideo(true);
+                setError(null);
+            };
+
             const handleError = (e) => {
                 console.error('❌ VideoPlayer - Video element error for user:', user.uid, e);
                 setError('Video playback error');
@@ -52,13 +69,20 @@ const VideoPlayer = ({ user, style }) => {
             // Add event listeners
             videoElement.addEventListener('canplay', handleCanPlay);
             videoElement.addEventListener('playing', handlePlaying);
+            videoElement.addEventListener('loadeddata', handleLoadedData);
             videoElement.addEventListener('error', handleError);
+            
+            // Fallback: Check periodically if video is playing but events didn't fire
+            let checkInterval = null;
 
             try {
                 // Stop any existing playback first
-                videoTrack.stop();
+                if (videoTrack.isPlaying) {
+                    videoTrack.stop();
+                }
                 
                 // Play the video track
+                console.log('VideoPlayer - Calling play() on video track for user:', user.uid);
                 const playResult = videoTrack.play(videoElement);
                 
                 // play() might return a promise or undefined
@@ -70,9 +94,17 @@ const VideoPlayer = ({ user, style }) => {
                         setTimeout(() => {
                             if (!checkVideoPlaying()) {
                                 // Wait a bit more for video to load
-                                setTimeout(checkVideoPlaying, 500);
+                                setTimeout(() => {
+                                    if (!checkVideoPlaying()) {
+                                        // Force set hasVideo if track is playing
+                                        if (videoTrack.isPlaying) {
+                                            console.log('✅ VideoPlayer - Track is playing, setting hasVideo to true');
+                                            setHasVideo(true);
+                                        }
+                                    }
+                                }, 1000);
                             }
-                        }, 100);
+                        }, 200);
                     }).catch((err) => {
                         console.error('❌ VideoPlayer - Failed to play video track:', err);
                         setError('Failed to play video');
@@ -84,10 +116,47 @@ const VideoPlayer = ({ user, style }) => {
                     setTimeout(() => {
                         if (!checkVideoPlaying()) {
                             // Wait a bit more for video to load
-                            setTimeout(checkVideoPlaying, 500);
+                            setTimeout(() => {
+                                if (!checkVideoPlaying()) {
+                                    // Force set hasVideo if track is playing
+                                    if (videoTrack.isPlaying) {
+                                        console.log('✅ VideoPlayer - Track is playing (sync), setting hasVideo to true');
+                                        setHasVideo(true);
+                                    }
+                                }
+                            }, 1000);
                         }
-                    }, 100);
+                    }, 200);
                 }
+                
+                // Start interval check as fallback (in case events don't fire)
+                // Use a ref to track if we've already set hasVideo to avoid stale closure
+                let videoDetected = false;
+                checkInterval = setInterval(() => {
+                    if (videoElement && !videoDetected && !error && videoTrack) {
+                        const hasData = videoElement.readyState >= 2;
+                        const isPlaying = !videoElement.paused && videoElement.currentTime > 0;
+                        const trackPlaying = videoTrack.isPlaying;
+                        const hasVideoSrc = videoElement.srcObject !== null;
+                        
+                        if (hasData || isPlaying || trackPlaying || hasVideoSrc) {
+                            console.log('✅ VideoPlayer - Video detected via interval check for user:', user.uid, {
+                                hasData,
+                                isPlaying,
+                                trackPlaying,
+                                hasVideoSrc,
+                                readyState: videoElement.readyState
+                            });
+                            setHasVideo(true);
+                            setError(null);
+                            videoDetected = true;
+                            if (checkInterval) {
+                                clearInterval(checkInterval);
+                                checkInterval = null;
+                            }
+                        }
+                    }
+                }, 500); // Check every 500ms
             } catch (err) {
                 console.error('❌ VideoPlayer - Error playing video track:', err);
                 setError('Error playing video');
@@ -95,15 +164,23 @@ const VideoPlayer = ({ user, style }) => {
             }
 
             return () => {
+                // Clear interval
+                if (checkInterval) {
+                    clearInterval(checkInterval);
+                }
+                
                 // Remove event listeners
                 videoElement.removeEventListener('canplay', handleCanPlay);
                 videoElement.removeEventListener('playing', handlePlaying);
+                videoElement.removeEventListener('loadeddata', handleLoadedData);
                 videoElement.removeEventListener('error', handleError);
                 
                 // Cleanup
                 if (videoTrack && ref.current) {
                     try {
-                        videoTrack.stop();
+                        if (videoTrack.isPlaying) {
+                            videoTrack.stop();
+                        }
                         console.log('VideoPlayer - Stopped video track for user:', user.uid);
                     } catch (err) {
                         console.error('VideoPlayer - Error stopping video track:', err);

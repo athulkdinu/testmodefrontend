@@ -49,33 +49,43 @@ const VideoCall = () => {
 
             if (mediaType === "video") {
                 console.log("   Processing video for user:", user.uid);
+                console.log("   User object immediately after subscribe:", {
+                    uid: user.uid,
+                    hasVideoTrack: !!user.videoTrack,
+                    videoTrackType: user.videoTrack?.constructor?.name,
+                    enabled: user.videoTrack?.enabled,
+                    muted: user.videoTrack?.muted
+                });
                 
-                // Wait a bit for the track to be ready after subscription
+                // Add user immediately - the track should be available after subscribe
+                // If not available yet, we'll update it when it becomes available
+                setUsers((prevUsers) => {
+                    const existingUser = prevUsers.find(u => u.uid === user.uid);
+                    if (existingUser) {
+                        // Update existing user with latest track info
+                        console.log("   🔄 Updating existing user with video track:", user.uid);
+                        return prevUsers.map(u => u.uid === user.uid ? user : u);
+                    }
+                    console.log("➕ Adding user to list immediately:", user.uid);
+                    return [...prevUsers, user];
+                });
+                
+                // Also check again after a delay to catch any delayed track availability
                 setTimeout(() => {
-                    // Re-check the user object - track should be available now
-                    const updatedUser = clientRef.current.remoteUsers.find(u => u.uid === user.uid) || user;
-                    
-                    console.log("   User object after subscribe (delayed check):", {
-                        uid: updatedUser.uid,
-                        hasVideoTrack: !!updatedUser.videoTrack,
-                        videoTrackType: updatedUser.videoTrack?.constructor?.name,
-                        enabled: updatedUser.videoTrack?.enabled,
-                        muted: updatedUser.videoTrack?.muted,
-                        isPlaying: updatedUser.videoTrack?.isPlaying
-                    });
-                    
-                    // Always add/update user in list
-                    setUsers((prevUsers) => {
-                        const existingUser = prevUsers.find(u => u.uid === updatedUser.uid);
-                        if (existingUser) {
-                            // Update existing user with latest track info
-                            console.log("   🔄 Updating existing user with video track:", updatedUser.uid);
-                            return prevUsers.map(u => u.uid === updatedUser.uid ? updatedUser : u);
-                        }
-                        console.log("➕ Adding user to list:", updatedUser.uid);
-                        return [...prevUsers, updatedUser];
-                    });
-                }, 300); // Wait 300ms for track to be ready
+                    const updatedUser = clientRef.current?.remoteUsers?.find(u => u.uid === user.uid);
+                    if (updatedUser && updatedUser.videoTrack) {
+                        console.log("   ✅ Video track confirmed available after delay for user:", user.uid);
+                        setUsers((prevUsers) => {
+                            const existingUser = prevUsers.find(u => u.uid === updatedUser.uid);
+                            if (existingUser && !existingUser.videoTrack) {
+                                // Update if track wasn't there before
+                                console.log("   🔄 Updating user with newly available video track:", updatedUser.uid);
+                                return prevUsers.map(u => u.uid === updatedUser.uid ? updatedUser : u);
+                            }
+                            return prevUsers;
+                        });
+                    }
+                }, 500);
             }
 
             if (mediaType === "audio") {
@@ -215,27 +225,42 @@ const VideoCall = () => {
                 return;
             }
 
-            // Fetch token from backend
+            // Fetch token from backend with retry logic
             setError("Fetching token...");
             let tokenData;
-            try {
-                console.log("🔑 Fetching Agora token for channel:", channelName);
-                tokenData = await fetchToken(channelName, null);
-                if (!tokenData || !tokenData.token) {
-                    throw new Error("Token data is invalid or missing");
+            let retryCount = 0;
+            const maxRetries = 3;
+            
+            while (retryCount < maxRetries) {
+                try {
+                    console.log(`🔑 Fetching Agora token for channel: ${channelName} (attempt ${retryCount + 1}/${maxRetries})`);
+                    tokenData = await fetchToken(channelName, null);
+                    if (!tokenData || !tokenData.token) {
+                        throw new Error("Token data is invalid or missing");
+                    }
+                    console.log("✅ Token fetched successfully, UID:", tokenData.uid);
+                    setError(null);
+                    break; // Success, exit retry loop
+                } catch (tokenError) {
+                    retryCount++;
+                    console.error(`❌ Token fetch error (attempt ${retryCount}/${maxRetries}):`, tokenError);
+                    
+                    if (retryCount >= maxRetries) {
+                        // Final attempt failed
+                        const errorMsg = `Failed to get token after ${maxRetries} attempts: ${tokenError.message || 'Unknown error'}. Please ensure:\n1. Backend server is running\n2. AGORA_APP_CERTIFICATE is set in backend .env\n3. Network connection is stable`;
+                        setError(errorMsg);
+                        console.error("   Error details:", {
+                            message: tokenError.message,
+                            stack: tokenError.stack,
+                            channelName
+                        });
+                        return;
+                    } else {
+                        // Wait before retry
+                        console.log(`   Retrying in 1 second...`);
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                    }
                 }
-                console.log("✅ Token fetched successfully, UID:", tokenData.uid);
-                setError(null);
-            } catch (tokenError) {
-                const errorMsg = `Failed to get token: ${tokenError.message || 'Unknown error'}. Please ensure AGORA_APP_CERTIFICATE is set in backend .env and backend is running.`;
-                setError(errorMsg);
-                console.error("❌ Token fetch error:", tokenError);
-                console.error("   Error details:", {
-                    message: tokenError.message,
-                    stack: tokenError.stack,
-                    channelName
-                });
-                return;
             }
 
             // Join channel with the UID that matches the token
@@ -283,26 +308,38 @@ const VideoCall = () => {
                         if (remoteUser.hasVideo) {
                             await clientRef.current.subscribe(remoteUser, "video");
                             console.log("   ✅ Subscribed to video for user:", remoteUser.uid);
-                            console.log("   Remote user after subscribe:", {
-                                uid: remoteUser.uid,
-                                hasVideoTrack: !!remoteUser.videoTrack,
-                                enabled: remoteUser.videoTrack?.enabled,
-                                muted: remoteUser.videoTrack?.muted
-                            });
                             
-                            // Wait a moment for track to be ready
-                            setTimeout(() => {
-                                setUsers(prev => {
-                                    const existingUser = prev.find(u => u.uid === remoteUser.uid);
-                                    if (existingUser) {
-                                        // Update existing user
-                                        return prev.map(u => u.uid === remoteUser.uid ? remoteUser : u);
-                                    }
-                                    // Add new user
-                                    console.log("   ➕ Adding existing remote user to list:", remoteUser.uid);
-                                    return [...prev, remoteUser];
-                                });
-                            }, 200);
+                            // Check immediately and after delays to catch track when it becomes available
+                            const checkAndAddUser = (delay = 0) => {
+                                setTimeout(() => {
+                                    // Re-fetch user from remoteUsers to get latest track
+                                    const updatedRemoteUser = clientRef.current.remoteUsers.find(u => u.uid === remoteUser.uid) || remoteUser;
+                                    console.log(`   Remote user after subscribe (${delay}ms delay):`, {
+                                        uid: updatedRemoteUser.uid,
+                                        hasVideoTrack: !!updatedRemoteUser.videoTrack,
+                                        enabled: updatedRemoteUser.videoTrack?.enabled,
+                                        muted: updatedRemoteUser.videoTrack?.muted,
+                                        isPlaying: updatedRemoteUser.videoTrack?.isPlaying
+                                    });
+                                    
+                                    setUsers(prev => {
+                                        const existingUser = prev.find(u => u.uid === updatedRemoteUser.uid);
+                                        if (existingUser) {
+                                            // Update existing user with latest track
+                                            console.log("   🔄 Updating existing remote user:", updatedRemoteUser.uid);
+                                            return prev.map(u => u.uid === updatedRemoteUser.uid ? updatedRemoteUser : u);
+                                        }
+                                        // Add new user
+                                        console.log("   ➕ Adding existing remote user to list:", updatedRemoteUser.uid);
+                                        return [...prev, updatedRemoteUser];
+                                    });
+                                }, delay);
+                            };
+                            
+                            // Check immediately and after delays
+                            checkAndAddUser(0);
+                            checkAndAddUser(200);
+                            checkAndAddUser(500);
                         }
                         
                         // Subscribe to audio if available
