@@ -2,7 +2,7 @@ import { useState, useMemo } from "react";
 import { FiFile, FiUpload, FiDownload, FiX } from "react-icons/fi";
 import BackButton from "../components/BackButton";
 import { useAppContext } from "../context/AppContext";
-import { downloadRecordAPI } from "../services/allAPI";
+import SERVERURL from "../services/serverURL";
 
 const HealthRecords = () => {
   const { records, addRecord, user } = useAppContext();
@@ -16,22 +16,44 @@ const HealthRecords = () => {
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState("");
 
+  const handleView = (record) => {
+    if (!record?.fileUrl) return;
+    const url = record.fileUrl.startsWith("http")
+      ? record.fileUrl
+      : `${SERVERURL}${record.fileUrl}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
   const handleDownload = async (recordId) => {
     if (!user || !user.token) return;
     try {
-      const reqHeader = { "Authorization": `Bearer ${user.token}` };
-      const result = await downloadRecordAPI(recordId, reqHeader);
-      if (result.ok) {
-        const blob = await result.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = records.find(r => (r._id || r.id) === recordId)?.filename || 'record';
-        document.body.appendChild(a);
-        a.click();
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(a);
+      const record = records.find(r => (r._id || r.id) === recordId);
+      const filename = record?.filename || "record";
+
+      const response = await fetch(
+        `${SERVERURL}/api/records/${recordId}/download`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${user.token}`,
+          },
+        }
+      );
+
+      if (!response.ok) {
+        console.error("Failed to download record:", response.status, response.statusText);
+        return;
       }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
     } catch (error) {
       console.error("Error downloading record:", error);
     }
@@ -205,13 +227,22 @@ const HealthRecords = () => {
                   </div>
 
                   {rec.fileUrl && (
-                    <button 
-                      onClick={() => handleDownload(recordId)}
-                      className="p-2 text-primary hover:bg-primary/10 rounded-lg"
-                      title="Download"
-                    >
-                      <FiDownload />
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleView(rec)}
+                        className="p-2 text-secondary hover:bg-secondary/10 rounded-lg text-sm"
+                        title="View"
+                      >
+                        View
+                      </button>
+                      <button 
+                        onClick={() => handleDownload(recordId)}
+                        className="p-2 text-primary hover:bg-primary/10 rounded-lg"
+                        title="Download"
+                      >
+                        <FiDownload />
+                      </button>
+                    </div>
                   )}
                 </li>
               );

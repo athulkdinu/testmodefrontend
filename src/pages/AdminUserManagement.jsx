@@ -52,8 +52,8 @@ const AdminUserManagement = () => {
         <div className="flex items-center gap-3">
           <FiUsers className="text-3xl" />
           <div>
-            <h1 className="text-2xl font-bold">User Management</h1>
-            <p className="text-blue-100">Manage system users and patients</p>
+            <h1 className="text-2xl font-bold">Patient Management</h1>
+            <p className="text-blue-100">Manage patient accounts</p>
           </div>
         </div>
       </div>
@@ -84,7 +84,7 @@ const AdminUserManagement = () => {
             <div className="bg-blue-100 rounded-full p-3">
               <FiUserPlus className="text-xl text-blue-600" />
             </div>
-            <h2 className="text-xl font-bold text-secondary">Add New User</h2>
+                <h2 className="text-xl font-bold text-secondary">Add New Patient</h2>
           </div>
 
           <div className="space-y-5">
@@ -146,7 +146,7 @@ const AdminUserManagement = () => {
               </div>
               <div>
                 <h3 className="text-xl font-bold text-secondary">All Users</h3>
-                <p className="text-sm text-gray-500">{adminUsers.length} total users</p>
+                          <p className="text-sm text-gray-500">{adminUsers.length} total patients</p>
               </div>
             </div>
           </div>
