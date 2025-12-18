@@ -27,6 +27,7 @@ const VideoCall = () => {
     const [error, setError] = useState(null);
     const [showDebug, setShowDebug] = useState(false);
     const [connectionState, setConnectionState] = useState('DISCONNECTED');
+    const [localUid, setLocalUid] = useState(null); // Store local UID to filter it out
 
     // Controls
     const [trackState, setTrackState] = useState({ video: true, audio: true });
@@ -48,6 +49,12 @@ const VideoCall = () => {
             console.log("✅ Subscribe success", mediaType, "for user", user.uid);
 
             if (mediaType === "video") {
+                // Don't add local user to remote users list
+                if (user.uid === localUid) {
+                    console.log("   ⚠️ Ignoring local user's video track (already shown in preview)");
+                    return;
+                }
+                
                 // Check if video track is available
                 if (user.videoTrack) {
                     console.log("   Video track available, adding user to list");
@@ -59,7 +66,7 @@ const VideoCall = () => {
                                 console.log("⚠️ User already in list:", user.uid);
                                 return prevUsers;
                             }
-                            console.log("➕ Adding user to list:", user.uid);
+                            console.log("➕ Adding remote user to list:", user.uid);
                             console.log("   User video track:", {
                                 uid: user.uid,
                                 hasVideoTrack: !!user.videoTrack,
@@ -141,7 +148,11 @@ const VideoCall = () => {
         
         // Additional debugging events
         client.on("user-joined", (user) => {
-            console.log("👤 User joined channel:", user.uid);
+            if (user.uid === localUid) {
+                console.log("👤 Local user joined channel:", user.uid);
+            } else {
+                console.log("👤 Remote user joined channel:", user.uid);
+            }
             console.log("   Channel:", channelName);
         });
         
@@ -232,9 +243,10 @@ const VideoCall = () => {
             // Join channel with the UID that matches the token
             // IMPORTANT: The UID used in join() must match the UID used to generate the token!
             const uid = await client.join(appId, channelName, tokenData.token, tokenData.uid);
+            setLocalUid(uid); // Store local UID to filter it out from remote users
             console.log("✅ Joined channel successfully!");
             console.log("   Channel:", channelName);
-            console.log("   UID:", uid);
+            console.log("   Local UID:", uid);
             console.log("   App ID:", appId);
 
             // Create local audio and video tracks (following Agora docs)
@@ -257,6 +269,12 @@ const VideoCall = () => {
             if (remoteUsers.length > 0) {
                 console.log("   Found existing remote users, subscribing...");
                 for (const remoteUser of remoteUsers) {
+                    // Skip local user
+                    if (remoteUser.uid === uid) {
+                        console.log("   ⚠️ Skipping local user in remote users list");
+                        continue;
+                    }
+                    
                     try {
                         // Subscribe to video if available
                         if (remoteUser.hasVideo) {
