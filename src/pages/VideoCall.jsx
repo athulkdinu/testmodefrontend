@@ -25,6 +25,7 @@ const VideoCall = () => {
     const [start, setStart] = useState(false);
     const [localTracks, setLocalTracks] = useState([]); // [audioTrack, videoTrack]
     const [error, setError] = useState(null);
+    const [loading, setLoading] = useState(false); // Loading state for token fetching
     const [showDebug, setShowDebug] = useState(false);
     const [connectionState, setConnectionState] = useState('DISCONNECTED');
     const [forceUpdate, setForceUpdate] = useState(0); // Force re-render when tracks update
@@ -266,7 +267,8 @@ const VideoCall = () => {
             }
 
             // Fetch token from backend with retry logic
-            setError("Fetching token...");
+            setLoading(true);
+            setError(null);
             let tokenData;
             let retryCount = 0;
             const maxRetries = 3;
@@ -274,18 +276,13 @@ const VideoCall = () => {
             while (retryCount < maxRetries) {
                 try {
                     console.log(`🔑 Fetching Agora token for channel: ${channelName} (attempt ${retryCount + 1}/${maxRetries})`);
-                    // Clear any previous error
-                    if (retryCount === 0) {
-                        setError("Fetching token...");
-                    } else {
-                        setError(`Fetching token... (retry ${retryCount + 1}/${maxRetries})`);
-                    }
                     
                     tokenData = await fetchToken(channelName, null);
                     if (!tokenData || !tokenData.token) {
                         throw new Error("Token data is invalid or missing");
                     }
                     console.log("✅ Token fetched successfully, UID:", tokenData.uid);
+                    setLoading(false);
                     setError(null);
                     break; // Success, exit retry loop
                 } catch (tokenError) {
@@ -296,6 +293,7 @@ const VideoCall = () => {
                         // Final attempt failed
                         const errorMsg = `Failed to get token after ${maxRetries} attempts: ${tokenError.message || 'Unknown error'}. Please ensure:\n1. Backend server is running\n2. AGORA_APP_CERTIFICATE is set in backend .env\n3. Network connection is stable`;
                         setError(errorMsg);
+                        setLoading(false);
                         console.error("   Error details:", {
                             message: tokenError.message,
                             stack: tokenError.stack,
@@ -305,7 +303,6 @@ const VideoCall = () => {
                     } else {
                         // Wait before retry
                         console.log(`   Retrying in 1 second...`);
-                        setError(`Token fetch failed, retrying... (${retryCount + 1}/${maxRetries})`);
                         await new Promise(resolve => setTimeout(resolve, 1000));
                     }
                 }
@@ -498,6 +495,18 @@ const VideoCall = () => {
                 </div>
             </div>
 
+            {/* Loading Display */}
+            {loading && !error && (
+                <div className="absolute top-20 left-1/2 transform -translate-x-1/2 z-50 rounded-lg bg-blue-500/90 backdrop-blur-sm border border-blue-400 px-6 py-4 text-sm text-white shadow-2xl max-w-md">
+                    <div className="flex items-center gap-2">
+                        <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                        <div>
+                            <strong>Connecting...</strong> Fetching token...
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Error Display */}
             {error && (
                 <div className="absolute top-20 left-1/2 transform -translate-x-1/2 z-50 rounded-lg bg-red-500/90 backdrop-blur-sm border border-red-400 px-6 py-4 text-sm text-white shadow-2xl max-w-md">
@@ -544,6 +553,7 @@ const VideoCall = () => {
                             // Single remote user - Full screen
                             <div className="h-full w-full relative">
                                 <VideoPlayer 
+                                    key={`remote-${users[0].uid}-${forceUpdate}`}
                                     user={{
                                         ...users[0],
                                         displayName: participantName !== 'Participant' ? participantName : undefined
@@ -566,8 +576,12 @@ const VideoCall = () => {
                                 'grid-cols-3'
                             }`}>
                                 {users.map((user, index) => (
-                                    <div key={user.uid} className="relative">
-                                        <VideoPlayer user={user} style="h-full w-full" />
+                                    <div key={`container-${user.uid}`} className="relative">
+                                        <VideoPlayer 
+                                            key={`remote-${user.uid}-${forceUpdate}`}
+                                            user={user} 
+                                            style="h-full w-full" 
+                                        />
                                     </div>
                                 ))}
                             </div>
@@ -615,7 +629,7 @@ const VideoCall = () => {
                 )}
 
                 {/* Connection Status Overlay */}
-                {!start && !error && (
+                {!start && !error && !loading && (
                     <div className="absolute inset-0 flex items-center justify-center bg-black/80">
                         <div className="text-center text-white">
                             <div className="mb-4">

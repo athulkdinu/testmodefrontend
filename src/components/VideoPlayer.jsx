@@ -11,6 +11,10 @@ const VideoPlayer = ({ user, style }) => {
         const videoTrack = user.videoTrack;
         const videoElement = ref.current;
         
+        // Reset state when track changes
+        setHasVideo(false);
+        setError(null);
+        
         if (videoTrack) {
             console.log('VideoPlayer - Playing video track for user:', user.uid);
             console.log('VideoPlayer - Track state:', {
@@ -80,14 +84,23 @@ const VideoPlayer = ({ user, style }) => {
 
             const handleLoadedData = () => {
                 console.log('✅ VideoPlayer - Video loaded data for user:', user.uid);
-                setHasVideo(true);
-                setError(null);
+                if (videoElement.videoWidth > 0 || videoElement.videoHeight > 0) {
+                    setHasVideo(true);
+                    setError(null);
+                }
             };
             
             const handleLoadedMetadata = () => {
+                // Metadata loaded means video dimensions are available
                 console.log('✅ VideoPlayer - Video loaded metadata for user:', user.uid);
-                setHasVideo(true);
-                setError(null);
+                if (videoElement.videoWidth > 0 || videoElement.videoHeight > 0) {
+                    console.log('✅ VideoPlayer - Video metadata loaded with dimensions for user:', user.uid, {
+                        width: videoElement.videoWidth,
+                        height: videoElement.videoHeight
+                    });
+                    setHasVideo(true);
+                    setError(null);
+                }
             };
             
             const handleTimeUpdate = () => {
@@ -98,18 +111,6 @@ const VideoPlayer = ({ user, style }) => {
                         setHasVideo(true);
                         setError(null);
                     }
-                }
-            };
-            
-            const handleLoadedMetadata = () => {
-                // Metadata loaded means video dimensions are available
-                if (videoElement.videoWidth > 0 || videoElement.videoHeight > 0) {
-                    console.log('✅ VideoPlayer - Video metadata loaded with dimensions for user:', user.uid, {
-                        width: videoElement.videoWidth,
-                        height: videoElement.videoHeight
-                    });
-                    setHasVideo(true);
-                    setError(null);
                 }
             };
 
@@ -136,8 +137,18 @@ const VideoPlayer = ({ user, style }) => {
                     videoTrack.stop();
                 }
                 
-                // Play the video track
-                console.log('VideoPlayer - Calling play() on video track for user:', user.uid);
+                // Ensure video element is ready
+                if (!videoElement) {
+                    console.warn('VideoPlayer - Video element not available for user:', user.uid);
+                    return;
+                }
+                
+                // Play the video track - pass the video element directly
+                console.log('VideoPlayer - Calling play() on video track for user:', user.uid, {
+                    trackId: videoTrack.trackId,
+                    enabled: videoTrack.enabled,
+                    muted: videoTrack.muted
+                });
                 const playResult = videoTrack.play(videoElement);
                 
                 // Immediate check for dimensions (sometimes available right away)
@@ -147,124 +158,74 @@ const VideoPlayer = ({ user, style }) => {
                         setHasVideo(true);
                         setError(null);
                     }
-                }, 50);
+                }, 100);
                 
                 // play() might return a promise or undefined
                 if (playResult && typeof playResult.then === 'function') {
                     // It's a promise
                     playResult.then(() => {
                         console.log('✅ VideoPlayer - Video track play() resolved for user:', user.uid);
-                        // Check immediately
-                        if (!checkVideoPlaying()) {
-                            // Check after short delay
-                            setTimeout(() => {
-                                if (!checkVideoPlaying()) {
-                                    // Wait a bit more for video to load
-                                    setTimeout(() => {
-                                        if (!checkVideoPlaying()) {
-                                            // Final fallback: check dimensions and track state
-                                            if (videoElement.videoWidth > 0 || videoElement.videoHeight > 0) {
-                                                console.log('✅ VideoPlayer - Video has dimensions (final check), showing for user:', user.uid);
-                                                setHasVideo(true);
-                                            } else if (videoTrack.isPlaying) {
-                                                console.log('✅ VideoPlayer - Track is playing, setting hasVideo to true');
-                                                setHasVideo(true);
-                                            } else if (videoTrack && videoTrack.enabled) {
-                                                console.log('✅ VideoPlayer - Track exists and enabled, showing for user:', user.uid);
-                                                setHasVideo(true);
-                                            }
-                                        }
-                                    }, 1000);
-                                }
-                            }, 200);
-                        }
+                        // Check after play resolves
+                        setTimeout(() => {
+                            if (videoElement.videoWidth > 0 || videoElement.videoHeight > 0 || videoTrack.isPlaying) {
+                                setHasVideo(true);
+                                setError(null);
+                            } else {
+                                checkVideoPlaying();
+                            }
+                        }, 200);
                     }).catch((err) => {
                         console.error('❌ VideoPlayer - Failed to play video track:', err);
                         setError('Failed to play video');
                         setHasVideo(false);
                     });
                 } else {
-                    // Not a promise, check if video is ready
+                    // Not a promise, check if video is ready after a short delay
                     console.log('✅ VideoPlayer - Video track play() called (sync) for user:', user.uid);
-                    // Check immediately and after delays
                     setTimeout(() => {
-                        if (!checkVideoPlaying()) {
-                            // Wait a bit more for video to load
-                            setTimeout(() => {
-                                if (!checkVideoPlaying()) {
-                                    // Check dimensions as final fallback
-                                    if (videoElement.videoWidth > 0 || videoElement.videoHeight > 0) {
-                                        console.log('✅ VideoPlayer - Video has dimensions, showing for user:', user.uid);
-                                        setHasVideo(true);
-                                    } else if (videoTrack.isPlaying) {
-                                        console.log('✅ VideoPlayer - Track is playing (sync), setting hasVideo to true');
-                                        setHasVideo(true);
-                                    } else if (videoTrack && videoTrack.enabled) {
-                                        // If track exists and is enabled, show it
-                                        console.log('✅ VideoPlayer - Track exists and enabled, showing for user:', user.uid);
-                                        setHasVideo(true);
-                                    }
-                                }
-                            }, 1000);
+                        if (videoElement.videoWidth > 0 || videoElement.videoHeight > 0 || videoTrack.isPlaying) {
+                            setHasVideo(true);
+                            setError(null);
+                        } else {
+                            checkVideoPlaying();
                         }
                     }, 200);
                 }
                 
                 // Start interval check as fallback (in case events don't fire)
-                // Use a ref to track if we've already set hasVideo to avoid stale closure
-                let videoDetected = false;
                 let checkCount = 0;
-                const maxChecks = 20; // Check for up to 10 seconds (20 * 500ms)
+                const maxChecks = 30; // Check for up to 9 seconds (30 * 300ms)
                 
                 checkInterval = setInterval(() => {
                     checkCount++;
-                    if (videoElement && !videoDetected && !error && videoTrack) {
+                    if (videoElement && videoTrack && !hasVideo) {
+                        const hasVideoDimensions = videoElement.videoWidth > 0 || videoElement.videoHeight > 0;
+                        const hasNaturalDimensions = videoElement.naturalWidth > 0 || videoElement.naturalHeight > 0;
                         const hasData = videoElement.readyState >= 2;
                         const isPlaying = !videoElement.paused && videoElement.currentTime > 0;
                         const trackPlaying = videoTrack.isPlaying;
-                        const hasVideoSrc = videoElement.srcObject !== null;
-                        const hasVideoDimensions = videoElement.videoWidth > 0 || videoElement.videoHeight > 0;
-                        const hasNaturalDimensions = videoElement.naturalWidth > 0 || videoElement.naturalHeight > 0;
                         
                         // Priority: dimensions are the most reliable indicator
                         if (hasVideoDimensions || hasNaturalDimensions) {
-                            console.log('✅ VideoPlayer - Video detected via interval (dimensions) for user:', user.uid, {
-                                videoWidth: videoElement.videoWidth,
-                                videoHeight: videoElement.videoHeight,
-                                naturalWidth: videoElement.naturalWidth,
-                                naturalHeight: videoElement.naturalHeight
-                            });
+                            console.log('✅ VideoPlayer - Video detected via interval (dimensions) for user:', user.uid);
                             setHasVideo(true);
                             setError(null);
-                            videoDetected = true;
                             if (checkInterval) {
                                 clearInterval(checkInterval);
                                 checkInterval = null;
                             }
-                        } else if (hasData || isPlaying || trackPlaying || hasVideoSrc) {
-                            console.log('✅ VideoPlayer - Video detected via interval check for user:', user.uid, {
-                                hasData,
-                                isPlaying,
-                                trackPlaying,
-                                hasVideoSrc,
-                                readyState: videoElement.readyState
-                            });
+                        } else if (hasData || isPlaying || trackPlaying) {
+                            console.log('✅ VideoPlayer - Video detected via interval check for user:', user.uid);
                             setHasVideo(true);
                             setError(null);
-                            videoDetected = true;
                             if (checkInterval) {
                                 clearInterval(checkInterval);
                                 checkInterval = null;
                             }
                         } else if (checkCount >= maxChecks) {
-                            // After max checks, if track is playing, force show video
-                            if (trackPlaying) {
-                                console.log('✅ VideoPlayer - Force showing video (track is playing) for user:', user.uid);
-                                setHasVideo(true);
-                                setError(null);
-                            } else {
-                                // Even if track isn't playing, if we have a track, try to show it
-                                console.log('✅ VideoPlayer - Force showing video (track exists) for user:', user.uid);
+                            // After max checks, if we have a track, show it anyway
+                            if (videoTrack && videoTrack.enabled) {
+                                console.log('✅ VideoPlayer - Force showing video (track exists and enabled) for user:', user.uid);
                                 setHasVideo(true);
                                 setError(null);
                             }
@@ -273,14 +234,14 @@ const VideoPlayer = ({ user, style }) => {
                                 checkInterval = null;
                             }
                         }
-                    } else if (checkCount >= maxChecks) {
-                        // Stop checking after max attempts
+                    } else if (checkCount >= maxChecks || hasVideo) {
+                        // Stop checking after max attempts or if video is detected
                         if (checkInterval) {
                             clearInterval(checkInterval);
                             checkInterval = null;
                         }
                     }
-                }, 300); // Check every 300ms (more frequent)
+                }, 300); // Check every 300ms
             } catch (err) {
                 console.error('❌ VideoPlayer - Error playing video track:', err);
                 setError('Error playing video');
@@ -291,18 +252,21 @@ const VideoPlayer = ({ user, style }) => {
                 // Clear interval
                 if (checkInterval) {
                     clearInterval(checkInterval);
+                    checkInterval = null;
                 }
                 
                 // Remove event listeners
-                videoElement.removeEventListener('canplay', handleCanPlay);
-                videoElement.removeEventListener('playing', handlePlaying);
-                videoElement.removeEventListener('loadeddata', handleLoadedData);
-                videoElement.removeEventListener('loadedmetadata', handleLoadedMetadata);
-                videoElement.removeEventListener('timeupdate', handleTimeUpdate);
-                videoElement.removeEventListener('error', handleError);
+                if (videoElement) {
+                    videoElement.removeEventListener('canplay', handleCanPlay);
+                    videoElement.removeEventListener('playing', handlePlaying);
+                    videoElement.removeEventListener('loadeddata', handleLoadedData);
+                    videoElement.removeEventListener('loadedmetadata', handleLoadedMetadata);
+                    videoElement.removeEventListener('timeupdate', handleTimeUpdate);
+                    videoElement.removeEventListener('error', handleError);
+                }
                 
-                // Cleanup
-                if (videoTrack && ref.current) {
+                // Cleanup video track
+                if (videoTrack) {
                     try {
                         if (videoTrack.isPlaying) {
                             videoTrack.stop();
@@ -310,6 +274,15 @@ const VideoPlayer = ({ user, style }) => {
                         console.log('VideoPlayer - Stopped video track for user:', user.uid);
                     } catch (err) {
                         console.error('VideoPlayer - Error stopping video track:', err);
+                    }
+                }
+                
+                // Clear video element srcObject
+                if (ref.current) {
+                    try {
+                        ref.current.srcObject = null;
+                    } catch (err) {
+                        console.error('VideoPlayer - Error clearing video element:', err);
                     }
                 }
             };
