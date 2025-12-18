@@ -65,10 +65,18 @@ const VideoCall = () => {
 
             if (mediaType === "audio") {
                 if (user.audioTrack) {
-                    user.audioTrack.play().catch(err => {
-                        console.error("Failed to play audio:", err);
-                    });
-                    console.log("🔊 Playing audio for user:", user.uid);
+                    try {
+                        const playResult = user.audioTrack.play();
+                        // play() might return a promise or undefined
+                        if (playResult && typeof playResult.catch === 'function') {
+                            playResult.catch(err => {
+                                console.error("Failed to play audio:", err);
+                            });
+                        }
+                        console.log("🔊 Playing audio for user:", user.uid);
+                    } catch (err) {
+                        console.error("Error playing audio track:", err);
+                    }
                 } else {
                     console.warn("No audio track for user:", user.uid);
                 }
@@ -236,9 +244,17 @@ const VideoCall = () => {
                         if (remoteUser.hasAudio) {
                             await clientRef.current.subscribe(remoteUser, "audio");
                             if (remoteUser.audioTrack) {
-                                remoteUser.audioTrack.play().catch(err => {
-                                    console.error("Failed to play audio:", err);
-                                });
+                                try {
+                                    const playResult = remoteUser.audioTrack.play();
+                                    // play() might return a promise or undefined
+                                    if (playResult && typeof playResult.catch === 'function') {
+                                        playResult.catch(err => {
+                                            console.error("Failed to play audio:", err);
+                                        });
+                                    }
+                                } catch (err) {
+                                    console.error("Error playing audio track:", err);
+                                }
                             }
                             console.log("   ✅ Subscribed to audio for user:", remoteUser.uid);
                         }

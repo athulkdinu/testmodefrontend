@@ -23,15 +23,26 @@ const VideoPlayer = ({ user, style }) => {
                 videoTrack.stop();
                 
                 // Play the video track
-                videoTrack.play(ref.current).then(() => {
-                    console.log('✅ VideoPlayer - Video track playing successfully for user:', user.uid);
+                const playResult = videoTrack.play(ref.current);
+                
+                // play() might return a promise or undefined
+                if (playResult && typeof playResult.then === 'function') {
+                    // It's a promise
+                    playResult.then(() => {
+                        console.log('✅ VideoPlayer - Video track playing successfully for user:', user.uid);
+                        setHasVideo(true);
+                        setError(null);
+                    }).catch((err) => {
+                        console.error('❌ VideoPlayer - Failed to play video track:', err);
+                        setError('Failed to play video');
+                        setHasVideo(false);
+                    });
+                } else {
+                    // Not a promise, assume it played successfully
+                    console.log('✅ VideoPlayer - Video track playing (sync) for user:', user.uid);
                     setHasVideo(true);
                     setError(null);
-                }).catch((err) => {
-                    console.error('❌ VideoPlayer - Failed to play video track:', err);
-                    setError('Failed to play video');
-                    setHasVideo(false);
-                });
+                }
             } catch (err) {
                 console.error('❌ VideoPlayer - Error playing video track:', err);
                 setError('Error playing video');
