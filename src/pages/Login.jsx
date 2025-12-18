@@ -37,7 +37,7 @@ const Login = () => {
 
   return (
     <div className="mx-auto max-w-3xl rounded-[32px] bg-white p-10 shadow-card">
-      <h2 className="text-center text-3xl font-semibold text-secondary">Welcome back</h2>
+      <h2 className="text-center text-3xl font-bold text-secondary">Welcome back</h2>
       {/* <p className="mt-2 text-center text-sm text-gray-500">Use the demo credentials to access each module.</p> */}
 
 
