@@ -52,6 +52,33 @@ const VideoCall = () => {
             if (mediaType === "video") {
                 console.log("   Processing video for user:", user.uid);
                 
+                // Immediately check for track after subscription
+                const subscribedUser = clientRef.current.remoteUsers.find(u => u.uid === user.uid);
+                if (subscribedUser && subscribedUser.videoTrack) {
+                    console.log("   📹 Video track immediately available after subscribe:", {
+                        uid: subscribedUser.uid,
+                        trackId: subscribedUser.videoTrack.trackId,
+                        enabled: subscribedUser.videoTrack.enabled
+                    });
+                    
+                    // Add user immediately if track is available
+                    setUsers((prevUsers) => {
+                        const existingUser = prevUsers.find(u => u.uid === subscribedUser.uid);
+                        if (!existingUser) {
+                            console.log("➕ Adding user immediately with video track:", subscribedUser.uid);
+                            setForceUpdate(prev => prev + 1);
+                            return [...prevUsers, { ...subscribedUser }];
+                        } else if (existingUser.videoTrack?.trackId !== subscribedUser.videoTrack?.trackId) {
+                            console.log("   🔄 Updating user immediately with video track:", subscribedUser.uid);
+                            setForceUpdate(prev => prev + 1);
+                            return prevUsers.map(u => 
+                                u.uid === subscribedUser.uid ? { ...subscribedUser } : u
+                            );
+                        }
+                        return prevUsers;
+                    });
+                }
+                
                 // Function to update user with latest track from remoteUsers
                 const updateUserWithTrack = (delay = 0) => {
                     setTimeout(() => {
@@ -64,40 +91,58 @@ const VideoCall = () => {
                                 videoTrackType: updatedUser.videoTrack?.constructor?.name,
                                 enabled: updatedUser.videoTrack?.enabled,
                                 muted: updatedUser.videoTrack?.muted,
-                                isPlaying: updatedUser.videoTrack?.isPlaying
+                                isPlaying: updatedUser.videoTrack?.isPlaying,
+                                trackId: updatedUser.videoTrack?.trackId
                             });
                             
-                            setUsers((prevUsers) => {
-                                const existingUser = prevUsers.find(u => u.uid === updatedUser.uid);
-                                if (existingUser) {
-                                    // Always update to get latest track - create new object to force re-render
-                                    console.log("   🔄 Updating user with video track:", updatedUser.uid);
-                                    const updated = prevUsers.map(u => {
-                                        if (u.uid === updatedUser.uid) {
-                                            // Create new object with all properties to force React re-render
-                                            return { ...updatedUser };
+                            // Only proceed if we have a video track
+                            if (updatedUser.videoTrack) {
+                                setUsers((prevUsers) => {
+                                    const existingUser = prevUsers.find(u => u.uid === updatedUser.uid);
+                                    if (existingUser) {
+                                        // Check if the track is actually different
+                                        if (existingUser.videoTrack?.trackId !== updatedUser.videoTrack?.trackId) {
+                                            console.log("   🔄 Updating user with NEW video track:", updatedUser.uid, {
+                                                oldTrackId: existingUser.videoTrack?.trackId,
+                                                newTrackId: updatedUser.videoTrack?.trackId
+                                            });
+                                            const updated = prevUsers.map(u => {
+                                                if (u.uid === updatedUser.uid) {
+                                                    // Create new object with all properties to force React re-render
+                                                    return { ...updatedUser };
+                                                }
+                                                return u;
+                                            });
+                                            setForceUpdate(prev => prev + 1); // Force re-render
+                                            return updated;
+                                        } else {
+                                            // Track is the same, but ensure it's in the state
+                                            console.log("   ✅ User already has this video track:", updatedUser.uid);
+                                            return prevUsers;
                                         }
-                                        return u;
-                                    });
+                                    }
+                                    console.log("➕ Adding user to list with video track:", updatedUser.uid);
                                     setForceUpdate(prev => prev + 1); // Force re-render
-                                    return updated;
-                                }
-                                console.log("➕ Adding user to list:", updatedUser.uid);
-                                setForceUpdate(prev => prev + 1); // Force re-render
-                                return [...prevUsers, { ...updatedUser }];
-                            });
+                                    return [...prevUsers, { ...updatedUser }];
+                                });
+                            } else {
+                                console.warn(`   ⚠️ Video track not available yet for user ${updatedUser.uid} (delay: ${delay}ms)`);
+                            }
                         } else {
                             console.warn("   ⚠️ User not found in remoteUsers:", user.uid);
                         }
                     }, delay);
                 };
                 
-                // Check multiple times to catch the track when it becomes available
-                updateUserWithTrack(0);   // Immediate
+                // Check multiple times to catch the track when it becomes available (skip immediate if already added)
+                if (!subscribedUser || !subscribedUser.videoTrack) {
+                    updateUserWithTrack(50);   // After 50ms
+                }
                 updateUserWithTrack(100); // After 100ms
                 updateUserWithTrack(300); // After 300ms
                 updateUserWithTrack(500); // After 500ms
-                updateUserWithTrack(1000); // After 1 second (fallback)
+                updateUserWithTrack(1000); // After 1 second
+                updateUserWithTrack(2000); // After 2 seconds (fallback)
             }
 
             if (mediaType === "audio") {
@@ -220,16 +265,28 @@ const VideoCall = () => {
                         setUsers(prevUsers => {
                             const existingUser = prevUsers.find(u => u.uid === remoteUser.uid);
                             if (existingUser) {
-                                // Check if track is different (newly available)
-                                if (!existingUser.videoTrack && remoteUser.videoTrack) {
-                                    console.log("🔄 Video track became available for user:", remoteUser.uid);
+                                // Check if track is different (newly available or changed)
+                                const existingTrackId = existingUser.videoTrack?.trackId;
+                                const newTrackId = remoteUser.videoTrack?.trackId;
+                                
+                                if (!existingUser.videoTrack || existingTrackId !== newTrackId) {
+                                    console.log("🔄 Video track became available/changed for user:", remoteUser.uid, {
+                                        hadTrack: !!existingUser.videoTrack,
+                                        oldTrackId: existingTrackId,
+                                        newTrackId: newTrackId
+                                    });
+                                    setForceUpdate(prev => prev + 1); // Force re-render
                                     return prevUsers.map(u => 
                                         u.uid === remoteUser.uid ? { ...remoteUser } : u
                                     );
                                 }
                             } else if (remoteUser.videoTrack) {
                                 // User not in list but has video track - add them
-                                console.log("➕ Adding user with video track to list:", remoteUser.uid);
+                                console.log("➕ Adding user with video track to list:", remoteUser.uid, {
+                                    trackId: remoteUser.videoTrack.trackId,
+                                    enabled: remoteUser.videoTrack.enabled
+                                });
+                                setForceUpdate(prev => prev + 1); // Force re-render
                                 return [...prevUsers, { ...remoteUser }];
                             }
                             return prevUsers;
@@ -237,7 +294,7 @@ const VideoCall = () => {
                     }
                 });
             }
-        }, 1000); // Check every second
+        }, 500); // Check every 500ms (more frequent)
 
         return () => {
             clearInterval(trackMonitor);
@@ -362,30 +419,41 @@ const VideoCall = () => {
                                     console.log(`   Remote user after subscribe (${delay}ms delay):`, {
                                         uid: updatedRemoteUser.uid,
                                         hasVideoTrack: !!updatedRemoteUser.videoTrack,
+                                        trackId: updatedRemoteUser.videoTrack?.trackId,
                                         enabled: updatedRemoteUser.videoTrack?.enabled,
                                         muted: updatedRemoteUser.videoTrack?.muted,
                                         isPlaying: updatedRemoteUser.videoTrack?.isPlaying
                                     });
                                     
-                                    setUsers(prev => {
-                                        const existingUser = prev.find(u => u.uid === updatedRemoteUser.uid);
-                                        if (existingUser) {
-                                            // Update existing user with latest track - create new object
-                                            console.log("   🔄 Updating existing remote user:", updatedRemoteUser.uid);
-                                            const updated = prev.map(u => {
-                                                if (u.uid === updatedRemoteUser.uid) {
-                                                    return { ...updatedRemoteUser };
+                                    // Only proceed if we have a video track
+                                    if (updatedRemoteUser.videoTrack) {
+                                        setUsers(prev => {
+                                            const existingUser = prev.find(u => u.uid === updatedRemoteUser.uid);
+                                            if (existingUser) {
+                                                // Check if track is different
+                                                if (existingUser.videoTrack?.trackId !== updatedRemoteUser.videoTrack?.trackId) {
+                                                    console.log("   🔄 Updating existing remote user with NEW track:", updatedRemoteUser.uid);
+                                                    const updated = prev.map(u => {
+                                                        if (u.uid === updatedRemoteUser.uid) {
+                                                            return { ...updatedRemoteUser };
+                                                        }
+                                                        return u;
+                                                    });
+                                                    setForceUpdate(prev => prev + 1); // Force re-render
+                                                    return updated;
+                                                } else {
+                                                    console.log("   ✅ User already has this video track:", updatedRemoteUser.uid);
+                                                    return prev;
                                                 }
-                                                return u;
-                                            });
+                                            }
+                                            // Add new user
+                                            console.log("   ➕ Adding existing remote user to list:", updatedRemoteUser.uid);
                                             setForceUpdate(prev => prev + 1); // Force re-render
-                                            return updated;
-                                        }
-                                        // Add new user
-                                        console.log("   ➕ Adding existing remote user to list:", updatedRemoteUser.uid);
-                                        setForceUpdate(prev => prev + 1); // Force re-render
-                                        return [...prev, { ...updatedRemoteUser }];
-                                    });
+                                            return [...prev, { ...updatedRemoteUser }];
+                                        });
+                                    } else {
+                                        console.warn(`   ⚠️ Video track not available yet for existing user ${updatedRemoteUser.uid} (delay: ${delay}ms)`);
+                                    }
                                 }, delay);
                             };
                             
@@ -393,6 +461,8 @@ const VideoCall = () => {
                             checkAndAddUser(0);
                             checkAndAddUser(200);
                             checkAndAddUser(500);
+                            checkAndAddUser(1000);
+                            checkAndAddUser(2000);
                         }
                         
                         // Subscribe to audio if available
@@ -528,14 +598,27 @@ const VideoCall = () => {
                         <div className="font-bold text-sm mb-2 border-b border-white/20 pb-2">Debug Info</div>
                         <div><strong>Channel:</strong> {channelName}</div>
                         <div><strong>Connection:</strong> {connectionState}</div>
-                        <div><strong>Remote Users:</strong> {users.length}</div>
+                        <div><strong>Remote Users (State):</strong> {users.length}</div>
+                        <div><strong>Remote Users (Agora):</strong> {clientRef.current?.remoteUsers?.length || 0}</div>
                         <div><strong>Local Published:</strong> {start ? 'Yes' : 'No'}</div>
+                        {clientRef.current?.remoteUsers && clientRef.current.remoteUsers.length > 0 && (
+                            <div className="mt-2 pt-2 border-t border-white/20">
+                                <div className="font-semibold">Agora Remote Users:</div>
+                                {clientRef.current.remoteUsers.map(u => (
+                                    <div key={u.uid} className="ml-2 text-xs">
+                                        UID: {u.uid}, HasVideo: {u.hasVideo ? 'Yes' : 'No'}, 
+                                        VideoTrack: {u.videoTrack ? `Yes (${u.videoTrack.trackId || 'no-id'})` : 'No'},
+                                        HasAudio: {u.hasAudio ? 'Yes' : 'No'}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                         {users.length > 0 && (
                             <div className="mt-2 pt-2 border-t border-white/20">
-                                <div className="font-semibold">Remote Users:</div>
+                                <div className="font-semibold">State Users:</div>
                                 {users.map(u => (
-                                    <div key={u.uid} className="ml-2">
-                                        UID: {u.uid}, Video: {u.videoTrack ? 'Yes' : 'No'}, Audio: {u.audioTrack ? 'Yes' : 'No'}
+                                    <div key={u.uid} className="ml-2 text-xs">
+                                        UID: {u.uid}, Video: {u.videoTrack ? `Yes (${u.videoTrack.trackId || 'no-id'})` : 'No'}, Audio: {u.audioTrack ? 'Yes' : 'No'}
                                     </div>
                                 ))}
                             </div>
