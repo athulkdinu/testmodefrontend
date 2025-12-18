@@ -265,13 +265,13 @@ const VideoPlayer = ({ user, style }) => {
                     videoElement.removeEventListener('error', handleError);
                 }
                 
-                // Cleanup video track
-                if (videoTrack) {
+                // Cleanup video track (only stop local tracks)
+                if (videoTrack && user.uid === 'You') {
                     try {
                         if (videoTrack.isPlaying) {
                             videoTrack.stop();
                         }
-                        console.log('VideoPlayer - Stopped video track for user:', user.uid);
+                        console.log('VideoPlayer - Stopped LOCAL video track for user:', user.uid);
                     } catch (err) {
                         console.error('VideoPlayer - Error stopping video track:', err);
                     }

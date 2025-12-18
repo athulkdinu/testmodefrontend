@@ -35,6 +35,7 @@ const VideoCall = () => {
 
     // Use ref to store client instance to avoid recreation
     const clientRef = useRef(null);
+    const joinedRef = useRef(false);
 
     // Event handlers (defined first to be used in setupEventListeners)
     const handleUserPublished = async (user, mediaType) => {
@@ -233,17 +234,6 @@ const VideoCall = () => {
             console.log("   Has audio:", user.hasAudio);
         });
         
-        client.on("user-published", (user, mediaType) => {
-            console.log("📡 user-published event:", user.uid, mediaType);
-            console.log("   User state:", {
-                uid: user.uid,
-                hasVideo: user.hasVideo,
-                hasAudio: user.hasAudio,
-                hasVideoTrack: !!user.videoTrack,
-                hasAudioTrack: !!user.audioTrack
-            });
-        });
-        
         // Listen for when remote user's video track becomes available
         client.on("stream-type-changed", (uid, streamType) => {
             console.log("🔄 Stream type changed for user:", uid, "Type:", streamType);
@@ -280,76 +270,7 @@ const VideoCall = () => {
         // Join automatically on mount
         joinChannel();
 
-        // Monitor remote users for video tracks that become available
-        const trackMonitor = setInterval(() => {
-            if (client && client.remoteUsers) {
-                client.remoteUsers.forEach(remoteUser => {
-                    if (remoteUser.hasVideo && remoteUser.videoTrack) {
-                        // Check if this user is in our list and has the track
-                        setUsers(prevUsers => {
-                            const existingUser = prevUsers.find(u => u.uid === remoteUser.uid);
-                            if (existingUser) {
-                                // Check if track is different (newly available or changed)
-                                const existingTrackId = existingUser.videoTrack?.trackId;
-                                const newTrackId = remoteUser.videoTrack?.trackId;
-                                
-                                if (!existingUser.videoTrack || existingTrackId !== newTrackId) {
-                                    console.log("🔄 Video track became available/changed for user:", remoteUser.uid, {
-                                        hadTrack: !!existingUser.videoTrack,
-                                        oldTrackId: existingTrackId,
-                                        newTrackId: newTrackId,
-                                        videoTrackExists: !!remoteUser.videoTrack,
-                                        audioTrackExists: !!remoteUser.audioTrack,
-                                        trackId: remoteUser.videoTrack?.trackId
-                                    });
-                                    const updatedUsers = prevUsers.map(u => 
-                                        u.uid === remoteUser.uid ? {
-                                            ...remoteUser,
-                                            videoTrack: remoteUser.videoTrack, // Explicitly preserve videoTrack
-                                            audioTrack: remoteUser.audioTrack  // Explicitly preserve audioTrack
-                                        } : u
-                                    );
-                                    // Verify the track is in the updated state
-                                    const updatedUser = updatedUsers.find(u => u.uid === remoteUser.uid);
-                                    console.log("✅ Verified track in state:", {
-                                        uid: updatedUser?.uid,
-                                        hasVideoTrack: !!updatedUser?.videoTrack,
-                                        trackId: updatedUser?.videoTrack?.trackId
-                                    });
-                                    setForceUpdate(prev => prev + 1); // Force re-render
-                                    return updatedUsers;
-                                }
-                            } else if (remoteUser.videoTrack) {
-                                // User not in list but has video track - add them
-                                console.log("➕ Adding user with video track to list:", remoteUser.uid, {
-                                    trackId: remoteUser.videoTrack.trackId,
-                                    enabled: remoteUser.videoTrack.enabled,
-                                    videoTrackExists: !!remoteUser.videoTrack,
-                                    audioTrackExists: !!remoteUser.audioTrack
-                                });
-                                const newUser = {
-                                    ...remoteUser,
-                                    videoTrack: remoteUser.videoTrack, // Explicitly preserve videoTrack
-                                    audioTrack: remoteUser.audioTrack  // Explicitly preserve audioTrack
-                                };
-                                // Verify the track is in the new user object
-                                console.log("✅ Verified track in new user object:", {
-                                    uid: newUser.uid,
-                                    hasVideoTrack: !!newUser.videoTrack,
-                                    trackId: newUser.videoTrack?.trackId
-                                });
-                                setForceUpdate(prev => prev + 1); // Force re-render
-                                return [...prevUsers, newUser];
-                            }
-                            return prevUsers;
-                        });
-                    }
-                });
-            }
-        }, 500); // Check every 500ms (more frequent)
-
         return () => {
-            clearInterval(trackMonitor);
             // Clean up event listeners
             if (client) {
                 client.off("user-published", handleUserPublished);
@@ -372,6 +293,11 @@ const VideoCall = () => {
             const client = clientRef.current;
             if (!client) {
                 setError("Client not initialized");
+                return;
+            }
+
+            if (joinedRef.current) {
+                console.log('joinChannel skipped: already joined');
                 return;
             }
 
@@ -443,119 +369,13 @@ const VideoCall = () => {
             // Publish local tracks
             console.log("📤 Publishing local tracks...");
             await client.publish([audioTrack, videoTrack]);
+            joinedRef.current = true;
             setStart(true);
             setError(null);
             console.log("✅ Published local tracks successfully!");
             console.log("   Local UID:", uid);
             console.log("   Channel:", channelName);
             console.log("   Connection state:", client.connectionState);
-            
-            // Check for existing remote users and subscribe to them
-            const remoteUsers = client.remoteUsers;
-            console.log("   Current remote users count:", remoteUsers.length);
-            
-            if (remoteUsers.length > 0) {
-                console.log("   Found existing remote users, subscribing...");
-                for (const remoteUser of remoteUsers) {
-                    try {
-                        // Subscribe to video if available
-                        if (remoteUser.hasVideo) {
-                            await clientRef.current.subscribe(remoteUser, "video");
-                            console.log("   ✅ Subscribed to video for user:", remoteUser.uid);
-                            
-                            // Check immediately and after delays to catch track when it becomes available
-                            const checkAndAddUser = (delay = 0) => {
-                                setTimeout(() => {
-                                    // Re-fetch user from remoteUsers to get latest track
-                                    const updatedRemoteUser = clientRef.current.remoteUsers.find(u => u.uid === remoteUser.uid) || remoteUser;
-                                    console.log(`   Remote user after subscribe (${delay}ms delay):`, {
-                                        uid: updatedRemoteUser.uid,
-                                        hasVideoTrack: !!updatedRemoteUser.videoTrack,
-                                        trackId: updatedRemoteUser.videoTrack?.trackId,
-                                        enabled: updatedRemoteUser.videoTrack?.enabled,
-                                        muted: updatedRemoteUser.videoTrack?.muted,
-                                        isPlaying: updatedRemoteUser.videoTrack?.isPlaying
-                                    });
-                                    
-                                    // Only proceed if we have a video track
-                                    if (updatedRemoteUser.videoTrack) {
-                                        setUsers(prev => {
-                                            const existingUser = prev.find(u => u.uid === updatedRemoteUser.uid);
-                                            if (existingUser) {
-                                                // Check if track is different
-                                                if (existingUser.videoTrack?.trackId !== updatedRemoteUser.videoTrack?.trackId) {
-                                                    console.log("   🔄 Updating existing remote user with NEW track:", updatedRemoteUser.uid, {
-                                                        videoTrackExists: !!updatedRemoteUser.videoTrack,
-                                                        audioTrackExists: !!updatedRemoteUser.audioTrack
-                                                    });
-                                                    const updated = prev.map(u => {
-                                                        if (u.uid === updatedRemoteUser.uid) {
-                                                            return {
-                                                                ...updatedRemoteUser,
-                                                                videoTrack: updatedRemoteUser.videoTrack, // Explicitly preserve videoTrack
-                                                                audioTrack: updatedRemoteUser.audioTrack  // Explicitly preserve audioTrack
-                                                            };
-                                                        }
-                                                        return u;
-                                                    });
-                                                    setForceUpdate(prev => prev + 1); // Force re-render
-                                                    return updated;
-                                                } else {
-                                                    console.log("   ✅ User already has this video track:", updatedRemoteUser.uid);
-                                                    return prev;
-                                                }
-                                            }
-                                            // Add new user
-                                            console.log("   ➕ Adding existing remote user to list:", updatedRemoteUser.uid, {
-                                                videoTrackExists: !!updatedRemoteUser.videoTrack,
-                                                audioTrackExists: !!updatedRemoteUser.audioTrack
-                                            });
-                                            setForceUpdate(prev => prev + 1); // Force re-render
-                                            return [...prev, {
-                                                ...updatedRemoteUser,
-                                                videoTrack: updatedRemoteUser.videoTrack, // Explicitly preserve videoTrack
-                                                audioTrack: updatedRemoteUser.audioTrack  // Explicitly preserve audioTrack
-                                            }];
-                                        });
-                                    } else {
-                                        console.warn(`   ⚠️ Video track not available yet for existing user ${updatedRemoteUser.uid} (delay: ${delay}ms)`);
-                                    }
-                                }, delay);
-                            };
-                            
-                            // Check immediately and after delays
-                            checkAndAddUser(0);
-                            checkAndAddUser(200);
-                            checkAndAddUser(500);
-                            checkAndAddUser(1000);
-                            checkAndAddUser(2000);
-                        }
-                        
-                        // Subscribe to audio if available
-                        if (remoteUser.hasAudio) {
-                            await clientRef.current.subscribe(remoteUser, "audio");
-                            if (remoteUser.audioTrack) {
-                                try {
-                                    const playResult = remoteUser.audioTrack.play();
-                                    // play() might return a promise or undefined
-                                    if (playResult && typeof playResult.catch === 'function') {
-                                        playResult.catch(err => {
-                                            console.error("Failed to play audio:", err);
-                                        });
-                                    }
-                                } catch (err) {
-                                    console.error("Error playing audio track:", err);
-                                }
-                            }
-                            console.log("   ✅ Subscribed to audio for user:", remoteUser.uid);
-                        }
-                    } catch (err) {
-                        console.error("   ❌ Failed to subscribe to existing user:", remoteUser.uid, err);
-                    }
-                }
-            } else {
-                console.log("   Waiting for remote users to join...");
-            }
         } catch (error) {
             console.error("Failed to join channel", error);
             setError(`Failed to join channel: ${error.message || error}`);
@@ -580,6 +400,8 @@ const VideoCall = () => {
             if (client) {
                 await client.leave();
             }
+
+            joinedRef.current = false;
 
             if (!isUnmount) navigate(-1); // Go back
         } catch (error) {
