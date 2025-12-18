@@ -158,9 +158,15 @@ const DoctorVideoConsultation = () => {
                 
                 // Create the same channel name format as patient side
                 // Format: patient-{patientId}-doctor-{doctorId}
+                // IMPORTANT: Use String() to ensure consistent formatting - must match patient side exactly!
                 const patientId = String(selectedPatient._id || selectedPatient.id);
                 const doctorId = String(user?.id || user?._id || 'doctor');
                 const channelName = `patient-${patientId}-doctor-${doctorId}`;
+                
+                console.log('Doctor initiating call:');
+                console.log('  Patient ID:', patientId);
+                console.log('  Doctor ID:', doctorId);
+                console.log('  Channel Name:', channelName);
                 
                 // Send call notification to patient via Socket.IO
                 if (patientId && initiateCall) {

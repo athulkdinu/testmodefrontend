@@ -141,14 +141,20 @@ const VideoConsultation = () => {
                     
                     // Create a unique channel name for this patient-doctor pair
                     // Format: patient-{patientId}-doctor-{doctorId}
-                    const patientId = user?.id || user?._id || 'patient';
-                    const doctorUserId = doctor.userId || doctor.id;
+                    // IMPORTANT: Use String() to ensure consistent formatting
+                    const patientId = String(user?.id || user?._id || 'patient');
+                    const doctorUserId = String(doctor.userId || doctor.id);
                     const channelName = `patient-${patientId}-doctor-${doctorUserId}`;
+                    
+                    console.log('Patient initiating call:');
+                    console.log('  Patient ID:', patientId);
+                    console.log('  Doctor User ID:', doctorUserId);
+                    console.log('  Channel Name:', channelName);
                     
                     // Send call notification to doctor via Socket.IO
                     if (doctorUserId && initiateCall) {
                       initiateCall(
-                        doctorUserId.toString(),
+                        doctorUserId,
                         channelName,
                         user?.name || 'Patient',
                         'patient-to-doctor'

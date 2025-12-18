@@ -17,6 +17,10 @@ const VideoCall = () => {
     
     // Get participant info from URL params
     const participantName = searchParams.get('name') || 'Participant';
+    
+    // Debug: Log channel name
+    console.log('VideoCall - Channel Name:', channelName);
+    console.log('VideoCall - Participant Name:', participantName);
     const [users, setUsers] = useState([]);
     const [start, setStart] = useState(false);
     const [localTracks, setLocalTracks] = useState([]); // [audioTrack, videoTrack]
@@ -31,21 +35,25 @@ const VideoCall = () => {
     // Event handlers (defined first to be used in setupEventListeners)
     const handleUserPublished = async (user, mediaType) => {
         try {
+            console.log("User published:", user.uid, mediaType);
             await clientRef.current.subscribe(user, mediaType);
-            console.log("Subscribe success", mediaType);
+            console.log("Subscribe success", mediaType, "for user", user.uid);
 
             if (mediaType === "video") {
                 setUsers((prevUsers) => {
                     // Avoid duplicates
                     if (prevUsers.find(u => u.uid === user.uid)) {
+                        console.log("User already in list:", user.uid);
                         return prevUsers;
                     }
+                    console.log("Adding user to list:", user.uid);
                     return [...prevUsers, user];
                 });
             }
 
             if (mediaType === "audio") {
                 user.audioTrack.play();
+                console.log("Playing audio for user:", user.uid);
             }
         } catch (error) {
             console.error("Failed to subscribe to user", error);
@@ -78,6 +86,15 @@ const VideoCall = () => {
         
         // Handle when a remote user leaves the channel
         client.on("user-left", handleUserLeft);
+        
+        // Additional debugging events
+        client.on("user-joined", (user) => {
+            console.log("👤 User joined channel:", user.uid);
+        });
+        
+        client.on("exception", (evt) => {
+            console.error("Agora exception:", evt);
+        });
     };
 
     // Initialize client (following Agora docs best practice)
@@ -138,17 +155,22 @@ const VideoCall = () => {
             // Join channel with the UID that matches the token
             // IMPORTANT: The UID used in join() must match the UID used to generate the token!
             const uid = await client.join(appId, channelName, tokenData.token, tokenData.uid);
-            console.log("Joined channel successfully with UID:", uid);
+            console.log("✅ Joined channel successfully!");
+            console.log("   Channel:", channelName);
+            console.log("   UID:", uid);
+            console.log("   App ID:", appId);
 
             // Create local audio and video tracks (following Agora docs)
             const [audioTrack, videoTrack] = await AgoraRTC.createMicrophoneAndCameraTracks();
             setLocalTracks([audioTrack, videoTrack]);
+            console.log("✅ Local tracks created");
 
             // Publish local tracks
             await client.publish([audioTrack, videoTrack]);
             setStart(true);
             setError(null);
-            console.log("Publish success!");
+            console.log("✅ Published local tracks successfully!");
+            console.log("   Waiting for remote users to join...");
         } catch (error) {
             console.error("Failed to join channel", error);
             setError(`Failed to join channel: ${error.message || error}`);
