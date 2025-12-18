@@ -27,6 +27,7 @@ const VideoCall = () => {
     const [error, setError] = useState(null);
     const [showDebug, setShowDebug] = useState(false);
     const [connectionState, setConnectionState] = useState('DISCONNECTED');
+    const [forceUpdate, setForceUpdate] = useState(0); // Force re-render when tracks update
 
     // Controls
     const [trackState, setTrackState] = useState({ video: true, audio: true });
@@ -49,43 +50,53 @@ const VideoCall = () => {
 
             if (mediaType === "video") {
                 console.log("   Processing video for user:", user.uid);
-                console.log("   User object immediately after subscribe:", {
-                    uid: user.uid,
-                    hasVideoTrack: !!user.videoTrack,
-                    videoTrackType: user.videoTrack?.constructor?.name,
-                    enabled: user.videoTrack?.enabled,
-                    muted: user.videoTrack?.muted
-                });
                 
-                // Add user immediately - the track should be available after subscribe
-                // If not available yet, we'll update it when it becomes available
-                setUsers((prevUsers) => {
-                    const existingUser = prevUsers.find(u => u.uid === user.uid);
-                    if (existingUser) {
-                        // Update existing user with latest track info
-                        console.log("   🔄 Updating existing user with video track:", user.uid);
-                        return prevUsers.map(u => u.uid === user.uid ? user : u);
-                    }
-                    console.log("➕ Adding user to list immediately:", user.uid);
-                    return [...prevUsers, user];
-                });
+                // Function to update user with latest track from remoteUsers
+                const updateUserWithTrack = (delay = 0) => {
+                    setTimeout(() => {
+                        // Always re-fetch from remoteUsers to get the latest track
+                        const updatedUser = clientRef.current?.remoteUsers?.find(u => u.uid === user.uid);
+                        if (updatedUser) {
+                            console.log(`   User object after subscribe (${delay}ms delay):`, {
+                                uid: updatedUser.uid,
+                                hasVideoTrack: !!updatedUser.videoTrack,
+                                videoTrackType: updatedUser.videoTrack?.constructor?.name,
+                                enabled: updatedUser.videoTrack?.enabled,
+                                muted: updatedUser.videoTrack?.muted,
+                                isPlaying: updatedUser.videoTrack?.isPlaying
+                            });
+                            
+                            setUsers((prevUsers) => {
+                                const existingUser = prevUsers.find(u => u.uid === updatedUser.uid);
+                                if (existingUser) {
+                                    // Always update to get latest track - create new object to force re-render
+                                    console.log("   🔄 Updating user with video track:", updatedUser.uid);
+                                    const updated = prevUsers.map(u => {
+                                        if (u.uid === updatedUser.uid) {
+                                            // Create new object with all properties to force React re-render
+                                            return { ...updatedUser };
+                                        }
+                                        return u;
+                                    });
+                                    setForceUpdate(prev => prev + 1); // Force re-render
+                                    return updated;
+                                }
+                                console.log("➕ Adding user to list:", updatedUser.uid);
+                                setForceUpdate(prev => prev + 1); // Force re-render
+                                return [...prevUsers, { ...updatedUser }];
+                            });
+                        } else {
+                            console.warn("   ⚠️ User not found in remoteUsers:", user.uid);
+                        }
+                    }, delay);
+                };
                 
-                // Also check again after a delay to catch any delayed track availability
-                setTimeout(() => {
-                    const updatedUser = clientRef.current?.remoteUsers?.find(u => u.uid === user.uid);
-                    if (updatedUser && updatedUser.videoTrack) {
-                        console.log("   ✅ Video track confirmed available after delay for user:", user.uid);
-                        setUsers((prevUsers) => {
-                            const existingUser = prevUsers.find(u => u.uid === updatedUser.uid);
-                            if (existingUser && !existingUser.videoTrack) {
-                                // Update if track wasn't there before
-                                console.log("   🔄 Updating user with newly available video track:", updatedUser.uid);
-                                return prevUsers.map(u => u.uid === updatedUser.uid ? updatedUser : u);
-                            }
-                            return prevUsers;
-                        });
-                    }
-                }, 500);
+                // Check multiple times to catch the track when it becomes available
+                updateUserWithTrack(0);   // Immediate
+                updateUserWithTrack(100); // After 100ms
+                updateUserWithTrack(300); // After 300ms
+                updateUserWithTrack(500); // After 500ms
+                updateUserWithTrack(1000); // After 1 second (fallback)
             }
 
             if (mediaType === "audio") {
@@ -199,7 +210,36 @@ const VideoCall = () => {
         // Join automatically on mount
         joinChannel();
 
+        // Monitor remote users for video tracks that become available
+        const trackMonitor = setInterval(() => {
+            if (client && client.remoteUsers) {
+                client.remoteUsers.forEach(remoteUser => {
+                    if (remoteUser.hasVideo && remoteUser.videoTrack) {
+                        // Check if this user is in our list and has the track
+                        setUsers(prevUsers => {
+                            const existingUser = prevUsers.find(u => u.uid === remoteUser.uid);
+                            if (existingUser) {
+                                // Check if track is different (newly available)
+                                if (!existingUser.videoTrack && remoteUser.videoTrack) {
+                                    console.log("🔄 Video track became available for user:", remoteUser.uid);
+                                    return prevUsers.map(u => 
+                                        u.uid === remoteUser.uid ? { ...remoteUser } : u
+                                    );
+                                }
+                            } else if (remoteUser.videoTrack) {
+                                // User not in list but has video track - add them
+                                console.log("➕ Adding user with video track to list:", remoteUser.uid);
+                                return [...prevUsers, { ...remoteUser }];
+                            }
+                            return prevUsers;
+                        });
+                    }
+                });
+            }
+        }, 1000); // Check every second
+
         return () => {
+            clearInterval(trackMonitor);
             // Clean up event listeners
             if (client) {
                 client.off("user-published", handleUserPublished);
@@ -333,13 +373,21 @@ const VideoCall = () => {
                                     setUsers(prev => {
                                         const existingUser = prev.find(u => u.uid === updatedRemoteUser.uid);
                                         if (existingUser) {
-                                            // Update existing user with latest track
+                                            // Update existing user with latest track - create new object
                                             console.log("   🔄 Updating existing remote user:", updatedRemoteUser.uid);
-                                            return prev.map(u => u.uid === updatedRemoteUser.uid ? updatedRemoteUser : u);
+                                            const updated = prev.map(u => {
+                                                if (u.uid === updatedRemoteUser.uid) {
+                                                    return { ...updatedRemoteUser };
+                                                }
+                                                return u;
+                                            });
+                                            setForceUpdate(prev => prev + 1); // Force re-render
+                                            return updated;
                                         }
                                         // Add new user
                                         console.log("   ➕ Adding existing remote user to list:", updatedRemoteUser.uid);
-                                        return [...prev, updatedRemoteUser];
+                                        setForceUpdate(prev => prev + 1); // Force re-render
+                                        return [...prev, { ...updatedRemoteUser }];
                                     });
                                 }, delay);
                             };
