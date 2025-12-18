@@ -49,7 +49,13 @@ const VideoPlayer = ({ user, style }) => {
                 setHasVideo(false);
             }
         } else {
-            console.warn('VideoPlayer - No video track for user:', user.uid);
+            // This is normal for remote users who haven't published video yet
+            // Don't show as error, just wait for the track
+            if (user.uid !== 'You') {
+                console.log('VideoPlayer - Waiting for video track from user:', user.uid);
+            } else {
+                console.warn('VideoPlayer - No video track for local user');
+            }
             setHasVideo(false);
         }
 

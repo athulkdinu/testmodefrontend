@@ -48,19 +48,39 @@ const VideoCall = () => {
             console.log("✅ Subscribe success", mediaType, "for user", user.uid);
 
             if (mediaType === "video") {
-                // Wait a bit to ensure track is ready
-                setTimeout(() => {
+                // Check if video track is available
+                if (user.videoTrack) {
+                    console.log("   Video track available, adding user to list");
+                    // Wait a bit to ensure track is ready
+                    setTimeout(() => {
+                        setUsers((prevUsers) => {
+                            // Avoid duplicates
+                            if (prevUsers.find(u => u.uid === user.uid)) {
+                                console.log("⚠️ User already in list:", user.uid);
+                                return prevUsers;
+                            }
+                            console.log("➕ Adding user to list:", user.uid);
+                            console.log("   User video track:", {
+                                uid: user.uid,
+                                hasVideoTrack: !!user.videoTrack,
+                                trackId: user.videoTrack?.trackId,
+                                enabled: user.videoTrack?.enabled,
+                                muted: user.videoTrack?.muted
+                            });
+                            return [...prevUsers, user];
+                        });
+                    }, 100);
+                } else {
+                    console.warn("   ⚠️ User published video but track is not available yet:", user.uid);
+                    // Still add user to list, VideoPlayer will wait for track
                     setUsers((prevUsers) => {
-                        // Avoid duplicates
                         if (prevUsers.find(u => u.uid === user.uid)) {
-                            console.log("⚠️ User already in list:", user.uid);
                             return prevUsers;
                         }
-                        console.log("➕ Adding user to list:", user.uid);
-                        console.log("   User video track:", user.videoTrack);
+                        console.log("➕ Adding user to list (waiting for video track):", user.uid);
                         return [...prevUsers, user];
                     });
-                }, 100);
+                }
             }
 
             if (mediaType === "audio") {
@@ -190,12 +210,22 @@ const VideoCall = () => {
             setError("Fetching token...");
             let tokenData;
             try {
+                console.log("🔑 Fetching Agora token for channel:", channelName);
                 tokenData = await fetchToken(channelName, null);
-                console.log("Token fetched successfully, UID:", tokenData.uid);
+                if (!tokenData || !tokenData.token) {
+                    throw new Error("Token data is invalid or missing");
+                }
+                console.log("✅ Token fetched successfully, UID:", tokenData.uid);
+                setError(null);
             } catch (tokenError) {
-                const errorMsg = `Failed to get token: ${tokenError.message}. Please ensure AGORA_APP_CERTIFICATE is set in backend .env`;
+                const errorMsg = `Failed to get token: ${tokenError.message || 'Unknown error'}. Please ensure AGORA_APP_CERTIFICATE is set in backend .env and backend is running.`;
                 setError(errorMsg);
-                console.error(errorMsg);
+                console.error("❌ Token fetch error:", tokenError);
+                console.error("   Error details:", {
+                    message: tokenError.message,
+                    stack: tokenError.stack,
+                    channelName
+                });
                 return;
             }
 
