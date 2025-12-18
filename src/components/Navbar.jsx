@@ -70,15 +70,7 @@ const Navbar = () => {
             </div>
           </Link>
 
-          {/* Start Video Call Button - Hidden for admin */}
-          {user.role !== 'admin' && (
-            <Link
-              to="/video-call"
-              className="ml-auto mr-6 hidden sm:block rounded-full bg-primary px-5 py-2 text-sm font-semibold text-white shadow-md transition hover:bg-secondary"
-            >
-              Start Video Call
-            </Link>
-          )}
+          
 
           {/* User Menu */}
           <div className="relative" ref={userMenuRef}>
