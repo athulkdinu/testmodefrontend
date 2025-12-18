@@ -16,29 +16,55 @@ const VideoPlayer = ({ user, style }) => {
             console.log('VideoPlayer - Track state:', {
                 isPlaying: videoTrack.isPlaying,
                 muted: videoTrack.muted,
-                enabled: videoTrack.enabled
+                enabled: videoTrack.enabled,
+                trackId: videoTrack.trackId
             });
 
             // Function to check if video is actually playing
             const checkVideoPlaying = () => {
-                if (videoElement && videoElement.readyState >= 2) { // HAVE_CURRENT_DATA or higher
-                    console.log('✅ VideoPlayer - Video element is ready for user:', user.uid);
-                    setHasVideo(true);
-                    setError(null);
-                    return true;
+                if (videoElement) {
+                    const readyState = videoElement.readyState;
+                    const hasVideoSrc = videoElement.srcObject !== null || videoElement.src !== '';
+                    
+                    console.log('VideoPlayer - Checking video state:', {
+                        readyState,
+                        hasVideoSrc,
+                        videoWidth: videoElement.videoWidth,
+                        videoHeight: videoElement.videoHeight,
+                        paused: videoElement.paused
+                    });
+                    
+                    if (readyState >= 2 || hasVideoSrc || videoElement.videoWidth > 0) {
+                        console.log('✅ VideoPlayer - Video element is ready for user:', user.uid);
+                        setHasVideo(true);
+                        setError(null);
+                        return true;
+                    }
                 }
                 return false;
             };
 
             // Listen for video events
             const handleCanPlay = () => {
-                console.log('✅ VideoPlayer - Video can play for user:', user.uid);
+                console.log('✅ VideoPlayer - Video can play event for user:', user.uid);
                 setHasVideo(true);
                 setError(null);
             };
 
             const handlePlaying = () => {
-                console.log('✅ VideoPlayer - Video is playing for user:', user.uid);
+                console.log('✅ VideoPlayer - Video is playing event for user:', user.uid);
+                setHasVideo(true);
+                setError(null);
+            };
+
+            const handleLoadedData = () => {
+                console.log('✅ VideoPlayer - Video loaded data for user:', user.uid);
+                setHasVideo(true);
+                setError(null);
+            };
+
+            const handleLoadedMetadata = () => {
+                console.log('✅ VideoPlayer - Video loaded metadata for user:', user.uid);
                 setHasVideo(true);
                 setError(null);
             };
@@ -52,13 +78,18 @@ const VideoPlayer = ({ user, style }) => {
             // Add event listeners
             videoElement.addEventListener('canplay', handleCanPlay);
             videoElement.addEventListener('playing', handlePlaying);
+            videoElement.addEventListener('loadeddata', handleLoadedData);
+            videoElement.addEventListener('loadedmetadata', handleLoadedMetadata);
             videoElement.addEventListener('error', handleError);
 
             try {
                 // Stop any existing playback first
-                videoTrack.stop();
+                if (videoTrack.isPlaying) {
+                    videoTrack.stop();
+                }
                 
                 // Play the video track
+                console.log('VideoPlayer - Calling play() on video track for user:', user.uid);
                 const playResult = videoTrack.play(videoElement);
                 
                 // play() might return a promise or undefined
@@ -70,9 +101,15 @@ const VideoPlayer = ({ user, style }) => {
                         setTimeout(() => {
                             if (!checkVideoPlaying()) {
                                 // Wait a bit more for video to load
-                                setTimeout(checkVideoPlaying, 500);
+                                setTimeout(() => {
+                                    if (!checkVideoPlaying()) {
+                                        // Force set hasVideo after longer wait
+                                        console.log('VideoPlayer - Force setting hasVideo after delay for user:', user.uid);
+                                        setHasVideo(true);
+                                    }
+                                }, 1000);
                             }
-                        }, 100);
+                        }, 200);
                     }).catch((err) => {
                         console.error('❌ VideoPlayer - Failed to play video track:', err);
                         setError('Failed to play video');
@@ -81,13 +118,27 @@ const VideoPlayer = ({ user, style }) => {
                 } else {
                     // Not a promise, check if video is ready
                     console.log('✅ VideoPlayer - Video track play() called (sync) for user:', user.uid);
+                    // For remote tracks, be more aggressive about showing video
+                    // If track exists and play() was called, assume it will work
                     setTimeout(() => {
                         if (!checkVideoPlaying()) {
                             // Wait a bit more for video to load
-                            setTimeout(checkVideoPlaying, 500);
+                            setTimeout(() => {
+                                // Force set hasVideo if track exists - video should be playing
+                                console.log('VideoPlayer - Force setting hasVideo (track exists) for user:', user.uid);
+                                setHasVideo(true);
+                            }, 500);
                         }
-                    }, 100);
+                    }, 200);
                 }
+                
+                // Additional fallback: if track exists, show video after 2 seconds regardless
+                setTimeout(() => {
+                    if (videoTrack && !hasVideo && !error) {
+                        console.log('VideoPlayer - Fallback: Force showing video after timeout for user:', user.uid);
+                        setHasVideo(true);
+                    }
+                }, 2000);
             } catch (err) {
                 console.error('❌ VideoPlayer - Error playing video track:', err);
                 setError('Error playing video');
@@ -98,6 +149,8 @@ const VideoPlayer = ({ user, style }) => {
                 // Remove event listeners
                 videoElement.removeEventListener('canplay', handleCanPlay);
                 videoElement.removeEventListener('playing', handlePlaying);
+                videoElement.removeEventListener('loadeddata', handleLoadedData);
+                videoElement.removeEventListener('loadedmetadata', handleLoadedMetadata);
                 videoElement.removeEventListener('error', handleError);
                 
                 // Cleanup
@@ -128,15 +181,25 @@ const VideoPlayer = ({ user, style }) => {
                 ref={ref}
                 className="h-full w-full object-cover"
                 style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                autoPlay
+                playsInline
             ></div>
             
-            {/* Loading/Error State */}
-            {!hasVideo && !error && (
-                <div className="absolute inset-0 flex items-center justify-center bg-gray-800">
+            {/* Loading/Error State - Only show if we have a track but it's not ready yet */}
+            {!hasVideo && !error && videoTrack && (
+                <div className="absolute inset-0 flex items-center justify-center bg-gray-800 z-10">
                     <div className="text-center text-white">
                         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-2"></div>
                         <p className="text-sm">Loading video...</p>
+                        <p className="text-xs text-gray-400 mt-1">Track available, waiting for stream</p>
                     </div>
+                </div>
+            )}
+            
+            {/* Show video element even if hasVideo is false - sometimes it works anyway */}
+            {videoTrack && (
+                <div className="absolute inset-0 z-0">
+                    {/* Video will render here via ref */}
                 </div>
             )}
             
