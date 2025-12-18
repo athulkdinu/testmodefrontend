@@ -65,14 +65,25 @@ const VideoCall = () => {
                     setUsers((prevUsers) => {
                         const existingUser = prevUsers.find(u => u.uid === subscribedUser.uid);
                         if (!existingUser) {
-                            console.log("➕ Adding user immediately with video track:", subscribedUser.uid);
+                            console.log("➕ Adding user immediately with video track:", subscribedUser.uid, {
+                                videoTrackExists: !!subscribedUser.videoTrack,
+                                audioTrackExists: !!subscribedUser.audioTrack
+                            });
                             setForceUpdate(prev => prev + 1);
-                            return [...prevUsers, { ...subscribedUser }];
+                            return [...prevUsers, {
+                                ...subscribedUser,
+                                videoTrack: subscribedUser.videoTrack, // Explicitly preserve videoTrack
+                                audioTrack: subscribedUser.audioTrack  // Explicitly preserve audioTrack
+                            }];
                         } else if (existingUser.videoTrack?.trackId !== subscribedUser.videoTrack?.trackId) {
                             console.log("   🔄 Updating user immediately with video track:", subscribedUser.uid);
                             setForceUpdate(prev => prev + 1);
                             return prevUsers.map(u => 
-                                u.uid === subscribedUser.uid ? { ...subscribedUser } : u
+                                u.uid === subscribedUser.uid ? {
+                                    ...subscribedUser,
+                                    videoTrack: subscribedUser.videoTrack, // Explicitly preserve videoTrack
+                                    audioTrack: subscribedUser.audioTrack  // Explicitly preserve audioTrack
+                                } : u
                             );
                         }
                         return prevUsers;
@@ -104,12 +115,18 @@ const VideoCall = () => {
                                         if (existingUser.videoTrack?.trackId !== updatedUser.videoTrack?.trackId) {
                                             console.log("   🔄 Updating user with NEW video track:", updatedUser.uid, {
                                                 oldTrackId: existingUser.videoTrack?.trackId,
-                                                newTrackId: updatedUser.videoTrack?.trackId
+                                                newTrackId: updatedUser.videoTrack?.trackId,
+                                                videoTrackExists: !!updatedUser.videoTrack,
+                                                audioTrackExists: !!updatedUser.audioTrack
                                             });
                                             const updated = prevUsers.map(u => {
                                                 if (u.uid === updatedUser.uid) {
                                                     // Create new object with all properties to force React re-render
-                                                    return { ...updatedUser };
+                                                    return {
+                                                        ...updatedUser,
+                                                        videoTrack: updatedUser.videoTrack, // Explicitly preserve videoTrack
+                                                        audioTrack: updatedUser.audioTrack  // Explicitly preserve audioTrack
+                                                    };
                                                 }
                                                 return u;
                                             });
@@ -121,9 +138,16 @@ const VideoCall = () => {
                                             return prevUsers;
                                         }
                                     }
-                                    console.log("➕ Adding user to list with video track:", updatedUser.uid);
+                                    console.log("➕ Adding user to list with video track:", updatedUser.uid, {
+                                        videoTrackExists: !!updatedUser.videoTrack,
+                                        audioTrackExists: !!updatedUser.audioTrack
+                                    });
                                     setForceUpdate(prev => prev + 1); // Force re-render
-                                    return [...prevUsers, { ...updatedUser }];
+                                    return [...prevUsers, {
+                                        ...updatedUser,
+                                        videoTrack: updatedUser.videoTrack, // Explicitly preserve videoTrack
+                                        audioTrack: updatedUser.audioTrack  // Explicitly preserve audioTrack
+                                    }];
                                 });
                             } else {
                                 console.warn(`   ⚠️ Video track not available yet for user ${updatedUser.uid} (delay: ${delay}ms)`);
@@ -273,21 +297,49 @@ const VideoCall = () => {
                                     console.log("🔄 Video track became available/changed for user:", remoteUser.uid, {
                                         hadTrack: !!existingUser.videoTrack,
                                         oldTrackId: existingTrackId,
-                                        newTrackId: newTrackId
+                                        newTrackId: newTrackId,
+                                        videoTrackExists: !!remoteUser.videoTrack,
+                                        audioTrackExists: !!remoteUser.audioTrack,
+                                        trackId: remoteUser.videoTrack?.trackId
+                                    });
+                                    const updatedUsers = prevUsers.map(u => 
+                                        u.uid === remoteUser.uid ? {
+                                            ...remoteUser,
+                                            videoTrack: remoteUser.videoTrack, // Explicitly preserve videoTrack
+                                            audioTrack: remoteUser.audioTrack  // Explicitly preserve audioTrack
+                                        } : u
+                                    );
+                                    // Verify the track is in the updated state
+                                    const updatedUser = updatedUsers.find(u => u.uid === remoteUser.uid);
+                                    console.log("✅ Verified track in state:", {
+                                        uid: updatedUser?.uid,
+                                        hasVideoTrack: !!updatedUser?.videoTrack,
+                                        trackId: updatedUser?.videoTrack?.trackId
                                     });
                                     setForceUpdate(prev => prev + 1); // Force re-render
-                                    return prevUsers.map(u => 
-                                        u.uid === remoteUser.uid ? { ...remoteUser } : u
-                                    );
+                                    return updatedUsers;
                                 }
                             } else if (remoteUser.videoTrack) {
                                 // User not in list but has video track - add them
                                 console.log("➕ Adding user with video track to list:", remoteUser.uid, {
                                     trackId: remoteUser.videoTrack.trackId,
-                                    enabled: remoteUser.videoTrack.enabled
+                                    enabled: remoteUser.videoTrack.enabled,
+                                    videoTrackExists: !!remoteUser.videoTrack,
+                                    audioTrackExists: !!remoteUser.audioTrack
+                                });
+                                const newUser = {
+                                    ...remoteUser,
+                                    videoTrack: remoteUser.videoTrack, // Explicitly preserve videoTrack
+                                    audioTrack: remoteUser.audioTrack  // Explicitly preserve audioTrack
+                                };
+                                // Verify the track is in the new user object
+                                console.log("✅ Verified track in new user object:", {
+                                    uid: newUser.uid,
+                                    hasVideoTrack: !!newUser.videoTrack,
+                                    trackId: newUser.videoTrack?.trackId
                                 });
                                 setForceUpdate(prev => prev + 1); // Force re-render
-                                return [...prevUsers, { ...remoteUser }];
+                                return [...prevUsers, newUser];
                             }
                             return prevUsers;
                         });
@@ -432,10 +484,17 @@ const VideoCall = () => {
                                             if (existingUser) {
                                                 // Check if track is different
                                                 if (existingUser.videoTrack?.trackId !== updatedRemoteUser.videoTrack?.trackId) {
-                                                    console.log("   🔄 Updating existing remote user with NEW track:", updatedRemoteUser.uid);
+                                                    console.log("   🔄 Updating existing remote user with NEW track:", updatedRemoteUser.uid, {
+                                                        videoTrackExists: !!updatedRemoteUser.videoTrack,
+                                                        audioTrackExists: !!updatedRemoteUser.audioTrack
+                                                    });
                                                     const updated = prev.map(u => {
                                                         if (u.uid === updatedRemoteUser.uid) {
-                                                            return { ...updatedRemoteUser };
+                                                            return {
+                                                                ...updatedRemoteUser,
+                                                                videoTrack: updatedRemoteUser.videoTrack, // Explicitly preserve videoTrack
+                                                                audioTrack: updatedRemoteUser.audioTrack  // Explicitly preserve audioTrack
+                                                            };
                                                         }
                                                         return u;
                                                     });
@@ -447,9 +506,16 @@ const VideoCall = () => {
                                                 }
                                             }
                                             // Add new user
-                                            console.log("   ➕ Adding existing remote user to list:", updatedRemoteUser.uid);
+                                            console.log("   ➕ Adding existing remote user to list:", updatedRemoteUser.uid, {
+                                                videoTrackExists: !!updatedRemoteUser.videoTrack,
+                                                audioTrackExists: !!updatedRemoteUser.audioTrack
+                                            });
                                             setForceUpdate(prev => prev + 1); // Force re-render
-                                            return [...prev, { ...updatedRemoteUser }];
+                                            return [...prev, {
+                                                ...updatedRemoteUser,
+                                                videoTrack: updatedRemoteUser.videoTrack, // Explicitly preserve videoTrack
+                                                audioTrack: updatedRemoteUser.audioTrack  // Explicitly preserve audioTrack
+                                            }];
                                         });
                                     } else {
                                         console.warn(`   ⚠️ Video track not available yet for existing user ${updatedRemoteUser.uid} (delay: ${delay}ms)`);
