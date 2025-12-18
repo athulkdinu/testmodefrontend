@@ -1,0 +1,369 @@
+import React, { useEffect, useState, useRef } from 'react';
+import AgoraRTC from 'agora-rtc-sdk-ng';
+import VideoPlayer from '../components/VideoPlayer';
+import { appId, fetchToken } from '../agora/settings';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { FiMic, FiMicOff, FiVideo, FiVideoOff, FiPhoneOff } from 'react-icons/fi';
+import { useAppContext } from '../context/AppContext';
+
+const VideoCall = () => {
+    const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
+    const { user } = useAppContext();
+    
+    // Get channel name from URL params, or use default
+    // Format: ?channel=patient-123-doctor-456 or ?channel=mainRoom
+    const channelName = searchParams.get('channel') || 'mainRoom';
+    
+    // Get participant info from URL params
+    const participantName = searchParams.get('name') || 'Participant';
+    const [users, setUsers] = useState([]);
+    const [start, setStart] = useState(false);
+    const [localTracks, setLocalTracks] = useState([]); // [audioTrack, videoTrack]
+    const [error, setError] = useState(null);
+
+    // Controls
+    const [trackState, setTrackState] = useState({ video: true, audio: true });
+
+    // Use ref to store client instance to avoid recreation
+    const clientRef = useRef(null);
+
+    // Event handlers (defined first to be used in setupEventListeners)
+    const handleUserPublished = async (user, mediaType) => {
+        try {
+            await clientRef.current.subscribe(user, mediaType);
+            console.log("Subscribe success", mediaType);
+
+            if (mediaType === "video") {
+                setUsers((prevUsers) => {
+                    // Avoid duplicates
+                    if (prevUsers.find(u => u.uid === user.uid)) {
+                        return prevUsers;
+                    }
+                    return [...prevUsers, user];
+                });
+            }
+
+            if (mediaType === "audio") {
+                user.audioTrack.play();
+            }
+        } catch (error) {
+            console.error("Failed to subscribe to user", error);
+        }
+    };
+
+    const handleUserUnpublished = (user, mediaType) => {
+        console.log("User unpublished", user.uid, mediaType);
+        if (mediaType === "video") {
+            setUsers((prevUsers) => prevUsers.filter((u) => u.uid !== user.uid));
+        }
+        // Audio track cleanup is handled automatically by Agora SDK
+    };
+
+    const handleUserLeft = (user) => {
+        console.log("User left", user.uid);
+        setUsers((prevUsers) => prevUsers.filter((u) => u.uid !== user.uid));
+    };
+
+    // Set up event listeners before joining (as per Agora docs)
+    const setupEventListeners = () => {
+        const client = clientRef.current;
+        if (!client) return;
+
+        // Handle when a remote user publishes media
+        client.on("user-published", handleUserPublished);
+        
+        // Handle when a remote user unpublishes media (stops publishing but doesn't leave)
+        client.on("user-unpublished", handleUserUnpublished);
+        
+        // Handle when a remote user leaves the channel
+        client.on("user-left", handleUserLeft);
+    };
+
+    // Initialize client (following Agora docs best practice)
+    const initializeClient = () => {
+        if (!clientRef.current) {
+            clientRef.current = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
+            setupEventListeners();
+        }
+        return clientRef.current;
+    };
+
+    useEffect(() => {
+        // Initialize client and set up listeners before joining
+        const client = initializeClient();
+
+        // Join automatically on mount
+        joinChannel();
+
+        return () => {
+            // Clean up event listeners
+            if (client) {
+                client.off("user-published", handleUserPublished);
+                client.off("user-unpublished", handleUserUnpublished);
+                client.off("user-left", handleUserLeft);
+            }
+            leaveChannel(true); // cleanup
+        };
+    }, []);
+
+    const joinChannel = async () => {
+        try {
+            if (!appId) {
+                const errorMsg = "Agora App ID is missing! Set VITE_AGORA_APP_ID in .env";
+                setError(errorMsg);
+                alert(errorMsg);
+                return;
+            }
+
+            const client = clientRef.current;
+            if (!client) {
+                setError("Client not initialized");
+                return;
+            }
+
+            // Fetch token from backend
+            setError("Fetching token...");
+            let tokenData;
+            try {
+                tokenData = await fetchToken(channelName, null);
+                console.log("Token fetched successfully, UID:", tokenData.uid);
+            } catch (tokenError) {
+                const errorMsg = `Failed to get token: ${tokenError.message}. Please ensure AGORA_APP_CERTIFICATE is set in backend .env`;
+                setError(errorMsg);
+                console.error(errorMsg);
+                return;
+            }
+
+            // Join channel with the UID that matches the token
+            // IMPORTANT: The UID used in join() must match the UID used to generate the token!
+            const uid = await client.join(appId, channelName, tokenData.token, tokenData.uid);
+            console.log("Joined channel successfully with UID:", uid);
+
+            // Create local audio and video tracks (following Agora docs)
+            const [audioTrack, videoTrack] = await AgoraRTC.createMicrophoneAndCameraTracks();
+            setLocalTracks([audioTrack, videoTrack]);
+
+            // Publish local tracks
+            await client.publish([audioTrack, videoTrack]);
+            setStart(true);
+            setError(null);
+            console.log("Publish success!");
+        } catch (error) {
+            console.error("Failed to join channel", error);
+            setError(`Failed to join channel: ${error.message || error}`);
+        }
+    };
+
+    const leaveChannel = async (isUnmount = false) => {
+        try {
+            const client = clientRef.current;
+            
+            // Stop and close local tracks (following Agora docs cleanup pattern)
+            localTracks.forEach((track) => {
+                if (track) {
+                    track.stop();
+                    track.close();
+                }
+            });
+            setLocalTracks([]);
+            setStart(false);
+
+            // Leave the channel
+            if (client) {
+                await client.leave();
+            }
+
+            if (!isUnmount) navigate(-1); // Go back
+        } catch (error) {
+            console.error("Error leaving channel", error);
+        }
+    };
+
+    const toggleTrack = async (type) => { // type: 'audio' or 'video'
+        try {
+            if (type === 'audio' && localTracks[0]) {
+                await localTracks[0].setMuted(!trackState.audio);
+                setTrackState(ps => ({ ...ps, audio: !ps.audio }));
+            } else if (type === 'video' && localTracks[1]) {
+                await localTracks[1].setMuted(!trackState.video);
+                setTrackState(ps => ({ ...ps, video: !ps.video }));
+            }
+        } catch (error) {
+            console.error(`Failed to toggle ${type}`, error);
+        }
+    };
+
+    return (
+        <div className="flex h-screen w-full flex-col bg-black">
+            {/* Header - Minimal */}
+            <div className="flex items-center justify-between bg-gradient-to-r from-blue-600 to-blue-700 px-6 py-3 shadow-lg">
+                <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                        <div className={`w-3 h-3 rounded-full ${start ? 'bg-green-400 animate-pulse' : 'bg-yellow-400'}`}></div>
+                        <h2 className="text-lg font-bold text-white">Video Consultation</h2>
+                    </div>
+                    {participantName !== 'Participant' && (
+                        <div className="hidden md:block text-sm text-blue-100">
+                            with <span className="font-semibold">{participantName}</span>
+                        </div>
+                    )}
+                </div>
+                <div className="flex items-center gap-4">
+                    <div className="hidden sm:flex items-center gap-2 text-white text-sm">
+                        <div className="w-2 h-2 rounded-full bg-green-400"></div>
+                        <span>{users.length + 1} {users.length === 0 ? 'Participant' : 'Participants'}</span>
+                    </div>
+                </div>
+            </div>
+
+            {/* Error Display */}
+            {error && (
+                <div className="absolute top-20 left-1/2 transform -translate-x-1/2 z-50 rounded-lg bg-red-500/90 backdrop-blur-sm border border-red-400 px-6 py-4 text-sm text-white shadow-2xl max-w-md">
+                    <div className="flex items-center gap-2">
+                        <div className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center">
+                            <span className="text-xs">!</span>
+                        </div>
+                        <div>
+                            <strong>Error:</strong> {error}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Main Video Area - Full Screen Style */}
+            <div className="flex-1 relative bg-black overflow-hidden">
+                {/* Remote Users - Main Large Display */}
+                {users.length > 0 ? (
+                    <div className="h-full w-full">
+                        {users.length === 1 ? (
+                            // Single remote user - Full screen
+                            <div className="h-full w-full relative">
+                                <VideoPlayer 
+                                    user={{
+                                        ...users[0],
+                                        displayName: participantName !== 'Participant' ? participantName : undefined
+                                    }} 
+                                    style="h-full w-full" 
+                                />
+                                {/* Participant Name Overlay */}
+                                {participantName !== 'Participant' && (
+                                    <div className="absolute top-6 left-6 bg-black/60 backdrop-blur-sm rounded-lg px-4 py-2">
+                                        <p className="text-white font-semibold text-lg">{participantName}</p>
+                                    </div>
+                                )}
+                            </div>
+                        ) : (
+                            // Multiple remote users - Grid layout
+                            <div className={`grid h-full w-full gap-2 p-2 ${
+                                users.length === 2 ? 'grid-cols-2' :
+                                users.length === 3 ? 'grid-cols-2 grid-rows-2' :
+                                users.length === 4 ? 'grid-cols-2 grid-rows-2' :
+                                'grid-cols-3'
+                            }`}>
+                                {users.map((user, index) => (
+                                    <div key={user.uid} className="relative">
+                                        <VideoPlayer user={user} style="h-full w-full" />
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                ) : (
+                    // Waiting for other participants
+                    <div className="h-full w-full flex items-center justify-center">
+                        <div className="text-center text-white">
+                            <div className="mb-4">
+                                <div className="inline-block animate-pulse">
+                                    <div className="w-20 h-20 border-4 border-white border-t-transparent rounded-full"></div>
+                                </div>
+                            </div>
+                            <p className="text-xl font-semibold">Waiting for {participantName} to join...</p>
+                            <p className="text-gray-400 mt-2">Your video will appear in the corner</p>
+                        </div>
+                    </div>
+                )}
+
+                {/* Local User - Picture in Picture (Small in corner) */}
+                {start && localTracks[1] && (
+                    <div className="absolute bottom-24 right-6 w-64 h-48 rounded-2xl overflow-hidden bg-gray-900 shadow-2xl border-2 border-white/20">
+                        <VideoPlayer user={{ uid: 'You', videoTrack: localTracks[1] }} style="h-full w-full" />
+                        
+                        {/* Local User Label */}
+                        <div className="absolute top-2 left-2 rounded-lg bg-black/60 px-2 py-1 text-xs text-white backdrop-blur-sm">
+                            You
+                        </div>
+
+                        {/* Local Status Indicators */}
+                        <div className="absolute bottom-2 right-2 flex gap-2">
+                            {!trackState.audio && (
+                                <div className="rounded-full bg-red-500 p-1.5 shadow-lg">
+                                    <FiMicOff className="text-white text-xs" />
+                                </div>
+                            )}
+                            {!trackState.video && (
+                                <div className="rounded-full bg-red-500 p-1.5 shadow-lg">
+                                    <FiVideoOff className="text-white text-xs" />
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {/* Connection Status Overlay */}
+                {!start && !error && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/80">
+                        <div className="text-center text-white">
+                            <div className="mb-4">
+                                <div className="inline-block animate-spin">
+                                    <div className="w-16 h-16 border-4 border-white border-t-transparent rounded-full"></div>
+                                </div>
+                            </div>
+                            <p className="text-xl font-semibold">Connecting...</p>
+                            <p className="text-gray-400 mt-2">Please wait</p>
+                        </div>
+                    </div>
+                )}
+            </div>
+
+            {/* Controls Bar - Modern Design */}
+            <div className="flex items-center justify-center gap-4 bg-gray-900/95 backdrop-blur-lg py-4 px-6 border-t border-white/10">
+                <button
+                    onClick={() => toggleTrack('audio')}
+                    className={`rounded-full p-4 transition-all duration-200 ${
+                        trackState.audio 
+                            ? 'bg-white/10 hover:bg-white/20 text-white' 
+                            : 'bg-red-500 text-white hover:bg-red-600 shadow-lg'
+                    }`}
+                    title={trackState.audio ? 'Mute' : 'Unmute'}
+                >
+                    {trackState.audio ? <FiMic size={22} /> : <FiMicOff size={22} />}
+                </button>
+
+                <button
+                    onClick={() => toggleTrack('video')}
+                    className={`rounded-full p-4 transition-all duration-200 ${
+                        trackState.video 
+                            ? 'bg-white/10 hover:bg-white/20 text-white' 
+                            : 'bg-red-500 text-white hover:bg-red-600 shadow-lg'
+                    }`}
+                    title={trackState.video ? 'Turn off camera' : 'Turn on camera'}
+                >
+                    {trackState.video ? <FiVideo size={22} /> : <FiVideoOff size={22} />}
+                </button>
+
+                <div className="w-px h-8 bg-white/20 mx-2"></div>
+
+                <button
+                    onClick={() => leaveChannel()}
+                    className="rounded-full bg-red-500 px-6 py-3 font-semibold text-white shadow-xl transition-all hover:bg-red-600 hover:scale-105 active:scale-95 flex items-center gap-2"
+                >
+                    <FiPhoneOff size={20} />
+                    <span className="hidden sm:inline">End Call</span>
+                </button>
+            </div>
+        </div>
+    );
+};
+
+export default VideoCall;
