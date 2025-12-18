@@ -26,12 +26,16 @@ const VideoPlayer = ({ user, style }) => {
                     // Check multiple conditions
                     const hasData = videoElement.readyState >= 2; // HAVE_CURRENT_DATA or higher
                     const isPlaying = !videoElement.paused && videoElement.currentTime > 0;
+                    const hasSrc = videoElement.srcObject !== null || videoElement.src !== '';
+                    const trackPlaying = videoTrack.isPlaying;
                     
-                    if (hasData || isPlaying) {
+                    if (hasData || isPlaying || hasSrc || trackPlaying) {
                         console.log('✅ VideoPlayer - Video element is ready for user:', user.uid, {
                             readyState: videoElement.readyState,
                             paused: videoElement.paused,
-                            currentTime: videoElement.currentTime
+                            currentTime: videoElement.currentTime,
+                            hasSrc,
+                            trackPlaying
                         });
                         setHasVideo(true);
                         setError(null);
@@ -59,6 +63,23 @@ const VideoPlayer = ({ user, style }) => {
                 setHasVideo(true);
                 setError(null);
             };
+            
+            const handleLoadedMetadata = () => {
+                console.log('✅ VideoPlayer - Video loaded metadata for user:', user.uid);
+                setHasVideo(true);
+                setError(null);
+            };
+            
+            const handleTimeUpdate = () => {
+                // If video has time updates, it's playing
+                if (videoElement.currentTime > 0) {
+                    if (!hasVideo) {
+                        console.log('✅ VideoPlayer - Video time update detected for user:', user.uid, 'currentTime:', videoElement.currentTime);
+                        setHasVideo(true);
+                        setError(null);
+                    }
+                }
+            };
 
             const handleError = (e) => {
                 console.error('❌ VideoPlayer - Video element error for user:', user.uid, e);
@@ -70,6 +91,8 @@ const VideoPlayer = ({ user, style }) => {
             videoElement.addEventListener('canplay', handleCanPlay);
             videoElement.addEventListener('playing', handlePlaying);
             videoElement.addEventListener('loadeddata', handleLoadedData);
+            videoElement.addEventListener('loadedmetadata', handleLoadedMetadata);
+            videoElement.addEventListener('timeupdate', handleTimeUpdate);
             videoElement.addEventListener('error', handleError);
             
             // Fallback: Check periodically if video is playing but events didn't fire
@@ -132,20 +155,28 @@ const VideoPlayer = ({ user, style }) => {
                 // Start interval check as fallback (in case events don't fire)
                 // Use a ref to track if we've already set hasVideo to avoid stale closure
                 let videoDetected = false;
+                let checkCount = 0;
+                const maxChecks = 20; // Check for up to 10 seconds (20 * 500ms)
+                
                 checkInterval = setInterval(() => {
+                    checkCount++;
                     if (videoElement && !videoDetected && !error && videoTrack) {
                         const hasData = videoElement.readyState >= 2;
                         const isPlaying = !videoElement.paused && videoElement.currentTime > 0;
                         const trackPlaying = videoTrack.isPlaying;
                         const hasVideoSrc = videoElement.srcObject !== null;
+                        const hasVideo = videoElement.videoWidth > 0 || videoElement.videoHeight > 0;
                         
-                        if (hasData || isPlaying || trackPlaying || hasVideoSrc) {
+                        if (hasData || isPlaying || trackPlaying || hasVideoSrc || hasVideo) {
                             console.log('✅ VideoPlayer - Video detected via interval check for user:', user.uid, {
                                 hasData,
                                 isPlaying,
                                 trackPlaying,
                                 hasVideoSrc,
-                                readyState: videoElement.readyState
+                                hasVideo,
+                                readyState: videoElement.readyState,
+                                videoWidth: videoElement.videoWidth,
+                                videoHeight: videoElement.videoHeight
                             });
                             setHasVideo(true);
                             setError(null);
@@ -154,6 +185,23 @@ const VideoPlayer = ({ user, style }) => {
                                 clearInterval(checkInterval);
                                 checkInterval = null;
                             }
+                        } else if (checkCount >= maxChecks) {
+                            // After max checks, if track is playing, assume video is there
+                            if (trackPlaying) {
+                                console.log('✅ VideoPlayer - Force showing video (track is playing) for user:', user.uid);
+                                setHasVideo(true);
+                                setError(null);
+                            }
+                            if (checkInterval) {
+                                clearInterval(checkInterval);
+                                checkInterval = null;
+                            }
+                        }
+                    } else if (checkCount >= maxChecks) {
+                        // Stop checking after max attempts
+                        if (checkInterval) {
+                            clearInterval(checkInterval);
+                            checkInterval = null;
                         }
                     }
                 }, 500); // Check every 500ms
@@ -173,6 +221,8 @@ const VideoPlayer = ({ user, style }) => {
                 videoElement.removeEventListener('canplay', handleCanPlay);
                 videoElement.removeEventListener('playing', handlePlaying);
                 videoElement.removeEventListener('loadeddata', handleLoadedData);
+                videoElement.removeEventListener('loadedmetadata', handleLoadedMetadata);
+                videoElement.removeEventListener('timeupdate', handleTimeUpdate);
                 videoElement.removeEventListener('error', handleError);
                 
                 // Cleanup

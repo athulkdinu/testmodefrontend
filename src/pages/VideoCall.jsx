@@ -234,6 +234,13 @@ const VideoCall = () => {
             while (retryCount < maxRetries) {
                 try {
                     console.log(`🔑 Fetching Agora token for channel: ${channelName} (attempt ${retryCount + 1}/${maxRetries})`);
+                    // Clear any previous error
+                    if (retryCount === 0) {
+                        setError("Fetching token...");
+                    } else {
+                        setError(`Fetching token... (retry ${retryCount + 1}/${maxRetries})`);
+                    }
+                    
                     tokenData = await fetchToken(channelName, null);
                     if (!tokenData || !tokenData.token) {
                         throw new Error("Token data is invalid or missing");
@@ -258,6 +265,7 @@ const VideoCall = () => {
                     } else {
                         // Wait before retry
                         console.log(`   Retrying in 1 second...`);
+                        setError(`Token fetch failed, retrying... (${retryCount + 1}/${maxRetries})`);
                         await new Promise(resolve => setTimeout(resolve, 1000));
                     }
                 }
