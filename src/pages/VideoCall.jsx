@@ -240,24 +240,36 @@ const VideoCall = () => {
 
             // Join channel with the UID that matches the token
             // IMPORTANT: The UID used in join() must match the UID used to generate the token!
+            console.log("🔌 Joining channel...");
             const uid = await client.join(appId, channelName, tokenData.token, tokenData.uid);
             console.log("✅ Joined channel successfully!");
             console.log("   Channel:", channelName);
             console.log("   UID:", uid);
             console.log("   App ID:", appId);
+            
+            // Wait a moment to ensure join is fully complete
+            await new Promise(resolve => setTimeout(resolve, 100));
 
             // Create local audio and video tracks (following Agora docs)
+            console.log("🎥 Creating local tracks...");
             const [audioTrack, videoTrack] = await AgoraRTC.createMicrophoneAndCameraTracks();
             setLocalTracks([audioTrack, videoTrack]);
             console.log("✅ Local tracks created");
 
+            // Verify we're still in the channel before publishing
+            if (client.connectionState !== 'CONNECTED' && client.connectionState !== 'CONNECTING') {
+                throw new Error(`Cannot publish: Connection state is ${client.connectionState}. Must be CONNECTED or CONNECTING.`);
+            }
+
             // Publish local tracks
+            console.log("📤 Publishing local tracks...");
             await client.publish([audioTrack, videoTrack]);
             setStart(true);
             setError(null);
             console.log("✅ Published local tracks successfully!");
             console.log("   Local UID:", uid);
             console.log("   Channel:", channelName);
+            console.log("   Connection state:", client.connectionState);
             
             // Check for existing remote users and subscribe to them
             const remoteUsers = client.remoteUsers;
