@@ -48,39 +48,34 @@ const VideoCall = () => {
             console.log("✅ Subscribe success", mediaType, "for user", user.uid);
 
             if (mediaType === "video") {
-                // Check if video track is available
-                if (user.videoTrack) {
-                    console.log("   Video track available, adding user to list");
-                    // Wait a bit to ensure track is ready
-                    setTimeout(() => {
-                        setUsers((prevUsers) => {
-                            // Avoid duplicates
-                            if (prevUsers.find(u => u.uid === user.uid)) {
-                                console.log("⚠️ User already in list:", user.uid);
-                                return prevUsers;
-                            }
-                            console.log("➕ Adding user to list:", user.uid);
-                            console.log("   User video track:", {
-                                uid: user.uid,
-                                hasVideoTrack: !!user.videoTrack,
-                                trackId: user.videoTrack?.trackId,
-                                enabled: user.videoTrack?.enabled,
-                                muted: user.videoTrack?.muted
-                            });
-                            return [...prevUsers, user];
-                        });
-                    }, 100);
-                } else {
-                    console.warn("   ⚠️ User published video but track is not available yet:", user.uid);
-                    // Still add user to list, VideoPlayer will wait for track
-                    setUsers((prevUsers) => {
-                        if (prevUsers.find(u => u.uid === user.uid)) {
-                            return prevUsers;
-                        }
-                        console.log("➕ Adding user to list (waiting for video track):", user.uid);
-                        return [...prevUsers, user];
+                console.log("   Processing video for user:", user.uid);
+                
+                // Wait a bit for the track to be ready after subscription
+                setTimeout(() => {
+                    // Re-check the user object - track should be available now
+                    const updatedUser = clientRef.current.remoteUsers.find(u => u.uid === user.uid) || user;
+                    
+                    console.log("   User object after subscribe (delayed check):", {
+                        uid: updatedUser.uid,
+                        hasVideoTrack: !!updatedUser.videoTrack,
+                        videoTrackType: updatedUser.videoTrack?.constructor?.name,
+                        enabled: updatedUser.videoTrack?.enabled,
+                        muted: updatedUser.videoTrack?.muted,
+                        isPlaying: updatedUser.videoTrack?.isPlaying
                     });
-                }
+                    
+                    // Always add/update user in list
+                    setUsers((prevUsers) => {
+                        const existingUser = prevUsers.find(u => u.uid === updatedUser.uid);
+                        if (existingUser) {
+                            // Update existing user with latest track info
+                            console.log("   🔄 Updating existing user with video track:", updatedUser.uid);
+                            return prevUsers.map(u => u.uid === updatedUser.uid ? updatedUser : u);
+                        }
+                        console.log("➕ Adding user to list:", updatedUser.uid);
+                        return [...prevUsers, updatedUser];
+                    });
+                }, 300); // Wait 300ms for track to be ready
             }
 
             if (mediaType === "audio") {
@@ -143,10 +138,24 @@ const VideoCall = () => {
         client.on("user-joined", (user) => {
             console.log("👤 User joined channel:", user.uid);
             console.log("   Channel:", channelName);
+            console.log("   Has video:", user.hasVideo);
+            console.log("   Has audio:", user.hasAudio);
         });
         
         client.on("user-published", (user, mediaType) => {
             console.log("📡 user-published event:", user.uid, mediaType);
+            console.log("   User state:", {
+                uid: user.uid,
+                hasVideo: user.hasVideo,
+                hasAudio: user.hasAudio,
+                hasVideoTrack: !!user.videoTrack,
+                hasAudioTrack: !!user.audioTrack
+            });
+        });
+        
+        // Listen for when remote user's video track becomes available
+        client.on("stream-type-changed", (uid, streamType) => {
+            console.log("🔄 Stream type changed for user:", uid, "Type:", streamType);
         });
         
         client.on("exception", (evt) => {
@@ -262,12 +271,26 @@ const VideoCall = () => {
                         if (remoteUser.hasVideo) {
                             await clientRef.current.subscribe(remoteUser, "video");
                             console.log("   ✅ Subscribed to video for user:", remoteUser.uid);
-                            setUsers(prev => {
-                                if (prev.find(u => u.uid === remoteUser.uid)) {
-                                    return prev;
-                                }
-                                return [...prev, remoteUser];
+                            console.log("   Remote user after subscribe:", {
+                                uid: remoteUser.uid,
+                                hasVideoTrack: !!remoteUser.videoTrack,
+                                enabled: remoteUser.videoTrack?.enabled,
+                                muted: remoteUser.videoTrack?.muted
                             });
+                            
+                            // Wait a moment for track to be ready
+                            setTimeout(() => {
+                                setUsers(prev => {
+                                    const existingUser = prev.find(u => u.uid === remoteUser.uid);
+                                    if (existingUser) {
+                                        // Update existing user
+                                        return prev.map(u => u.uid === remoteUser.uid ? remoteUser : u);
+                                    }
+                                    // Add new user
+                                    console.log("   ➕ Adding existing remote user to list:", remoteUser.uid);
+                                    return [...prev, remoteUser];
+                                });
+                            }, 200);
                         }
                         
                         // Subscribe to audio if available
