@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App.jsx';
 import { AppProvider } from './context/AppContext.js';
+import { SocketProvider } from './context/SocketContext.jsx';
 import ErrorBoundary from './components/ErrorBoundary.jsx';
 import './index.css';
 
@@ -16,7 +17,9 @@ ReactDOM.createRoot(document.getElementById('root')).render(
         }}
       >
         <AppProvider>
-          <App />
+          <SocketProvider>
+            <App />
+          </SocketProvider>
         </AppProvider>
       </BrowserRouter>
     </ErrorBoundary>

@@ -1,40 +1,67 @@
 import { useState, useEffect, useMemo } from 'react';
 import { FiPhoneIncoming, FiVideo, FiWifi, FiMonitor } from 'react-icons/fi';
+import { useNavigate } from 'react-router-dom';
 import BackButton from '../components/BackButton';
 import { useAppContext } from '../context/AppContext';
+import { useSocket } from '../context/SocketContext';
 import { getDoctorPatientsAPI } from '../services/allAPI';
 
 const DoctorVideoConsultation = () => {
   const { appointments, user } = useAppContext();
+  const { initiateCall } = useSocket();
+  const navigate = useNavigate();
   const [patients, setPatients] = useState([]);
   const [selectedPatientId, setSelectedPatientId] = useState('');
   const [connectionStatus, setConnectionStatus] = useState('idle');
   const [callDuration, setCallDuration] = useState(0);
   const [callInterval, setCallInterval] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
-    fetchPatients();
+    if (user && user.token) {
+      fetchPatients();
+    }
   }, [user]);
 
   const fetchPatients = async () => {
-    if (!user || !user.token) return;
+    if (!user || !user.token) {
+      setLoading(false);
+      return;
+    }
     try {
+      setLoading(true);
+      setError(null);
       const reqHeader = { "Authorization": `Bearer ${user.token}` };
       const result = await getDoctorPatientsAPI(reqHeader);
       if (result.status === 200) {
         const patientList = await result.json();
-        setPatients(patientList);
+        console.log("Fetched patients:", patientList);
+        setPatients(Array.isArray(patientList) ? patientList : []);
         if (patientList.length > 0 && !selectedPatientId) {
-          setSelectedPatientId(patientList[0]._id || patientList[0].id);
+          const firstPatientId = patientList[0]._id || patientList[0].id;
+          setSelectedPatientId(firstPatientId);
         }
+      } else {
+        const errorData = await result.json().catch(() => ({ message: 'Failed to fetch patients' }));
+        setError(errorData.message || 'Failed to fetch patients');
       }
     } catch (error) {
       console.error("Error fetching patients:", error);
+      setError(error.message || 'Failed to fetch patients');
+    } finally {
+      setLoading(false);
     }
   };
 
   const patient = useMemo(
-    () => patients.find((p) => (p._id || p.id) === selectedPatientId),
+    () => {
+      if (!selectedPatientId || patients.length === 0) return null;
+      return patients.find((p) => {
+        const patientId = p._id || p.id;
+        return String(patientId) === String(selectedPatientId);
+      });
+    },
     [patients, selectedPatientId]
   );
 
@@ -116,20 +143,39 @@ const DoctorVideoConsultation = () => {
             <button
               type="button"
               onClick={() => {
-                if (!selectedPatientId) return;
-                const selectedPatient = patients.find(p => (p._id || p.id) === selectedPatientId);
-                if (!selectedPatient) return;
+                if (!selectedPatientId) {
+                  alert('Please select a patient first');
+                  return;
+                }
+                const selectedPatient = patients.find(p => {
+                  const patientId = String(p._id || p.id);
+                  return patientId === String(selectedPatientId);
+                });
+                if (!selectedPatient) {
+                  alert('Selected patient not found');
+                  return;
+                }
                 
                 // Create the same channel name format as patient side
                 // Format: patient-{patientId}-doctor-{doctorId}
-                const patientId = selectedPatient._id || selectedPatient.id;
-                const doctorId = user?.id || user?._id || 'doctor';
+                const patientId = String(selectedPatient._id || selectedPatient.id);
+                const doctorId = String(user?.id || user?._id || 'doctor');
                 const channelName = `patient-${patientId}-doctor-${doctorId}`;
                 
+                // Send call notification to patient via Socket.IO
+                if (patientId && initiateCall) {
+                  initiateCall(
+                    patientId,
+                    channelName,
+                    user?.name || 'Doctor',
+                    'doctor-to-patient'
+                  );
+                }
+                
                 // Navigate to video call with channel and participant name
-                window.location.href = `/video-call?channel=${channelName}&name=${selectedPatient.name || 'Patient'}`;
+                navigate(`/video-call?channel=${channelName}&name=${selectedPatient.name || 'Patient'}`);
               }}
-              disabled={!selectedPatientId}
+              disabled={!selectedPatientId || patients.length === 0}
               className="flex items-center justify-center gap-2 rounded-full bg-primary px-6 py-3 font-semibold text-white hover:bg-secondary disabled:opacity-60"
             >
               <FiPhoneIncoming /> Start Video Call
@@ -151,25 +197,58 @@ const DoctorVideoConsultation = () => {
           {/* Patient Picker */}
           <div className="rounded-3xl bg-white p-6 shadow-card">
             <h3 className="text-xl font-semibold text-secondary">Select Patient</h3>
-            <select
-              value={selectedPatientId}
-              onChange={(e) => setSelectedPatientId(e.target.value)}
-              className="mt-3 w-full rounded-2xl border border-gray-200 px-4 py-3 focus:border-primary"
-            >
-              <option value="">-- Select --</option>
-              {patients.map((p) => (
-                <option key={p._id || p.id} value={p._id || p.id}>
-                  {p.name} ({p.email})
-                </option>
-              ))}
-            </select>
-
-            {patient && (
-              <div className="mt-4 rounded-2xl bg-surface p-4 text-sm text-gray-600">
-                <p><strong>Email:</strong> {patient.email}</p>
-                {patient.phone && <p><strong>Phone:</strong> {patient.phone}</p>}
-                {patient.address && <p><strong>Address:</strong> {patient.address}</p>}
+            
+            {loading ? (
+              <div className="mt-3 text-center py-4">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
+                <p className="text-sm text-gray-500 mt-2">Loading patients...</p>
               </div>
+            ) : error ? (
+              <div className="mt-3 p-4 bg-red-50 rounded-2xl">
+                <p className="text-sm text-red-600">{error}</p>
+                <button
+                  onClick={fetchPatients}
+                  className="mt-2 text-sm text-primary hover:underline"
+                >
+                  Retry
+                </button>
+              </div>
+            ) : patients.length === 0 ? (
+              <div className="mt-3 p-4 bg-yellow-50 rounded-2xl">
+                <p className="text-sm text-yellow-600">
+                  No patients found. Patients will appear here once they book appointments with you.
+                </p>
+              </div>
+            ) : (
+              <>
+                <select
+                  value={selectedPatientId}
+                  onChange={(e) => {
+                    console.log("Selected patient ID:", e.target.value);
+                    setSelectedPatientId(e.target.value);
+                  }}
+                  className="mt-3 w-full rounded-2xl border border-gray-200 px-4 py-3 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
+                  disabled={patients.length === 0}
+                >
+                  <option value="">-- Select Patient --</option>
+                  {patients.map((p) => {
+                    const patientId = String(p._id || p.id);
+                    return (
+                      <option key={patientId} value={patientId}>
+                        {p.name || 'Unknown'} ({p.email || 'No email'})
+                      </option>
+                    );
+                  })}
+                </select>
+
+                {patient && (
+                  <div className="mt-4 rounded-2xl bg-surface p-4 text-sm text-gray-600">
+                    <p><strong>Email:</strong> {patient.email}</p>
+                    {patient.phone && <p><strong>Phone:</strong> {patient.phone}</p>}
+                    {patient.address && <p><strong>Address:</strong> {patient.address}</p>}
+                  </div>
+                )}
+              </>
             )}
           </div>
 

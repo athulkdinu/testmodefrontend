@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import Navbar from './components/Navbar';
+import IncomingCallNotification from './components/IncomingCallNotification';
 import { useAppContext } from './context/AppContext';
 import Landing from './pages/Landing';
 import Login from './pages/Login';
@@ -48,6 +49,7 @@ const App = () => {
   return (
     <div className="min-h-screen bg-surface text-ink">
       {showNavbar && <Navbar />}
+      <IncomingCallNotification />
       <div className="mx-auto max-w-6xl px-4 py-10">
         <Routes>
           <Route path="/" element={<Landing />} />
@@ -187,11 +189,11 @@ const App = () => {
             }
           />
 
-          {/* Generic Agora Video Call */}
+          {/* Generic Agora Video Call - Admin not allowed */}
           <Route
             path="/video-call"
             element={
-              <ProtectedRoute roles={['patient', 'doctor', 'admin']}>
+              <ProtectedRoute roles={['patient', 'doctor']}>
                 <VideoCall />
               </ProtectedRoute>
             }

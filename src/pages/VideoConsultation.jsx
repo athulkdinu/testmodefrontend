@@ -1,12 +1,15 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { FiPhoneIncoming, FiVideo, FiWifi, FiMic, FiMonitor } from "react-icons/fi";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import BackButton from "../components/BackButton";
 import { useAppContext } from "../context/AppContext";
+import { useSocket } from "../context/SocketContext";
 
 const VideoConsultation = () => {
   // default to empty arrays in case context doesn't provide values yet
   const { doctorDirectory = [], medicines = [], records = [], user } = useAppContext();
+  const { initiateCall } = useSocket();
+  const navigate = useNavigate();
 
   const [selectedDoctor, setSelectedDoctor] = useState(doctorDirectory[0]?.id || "");
   const [meetingReason, setMeetingReason] = useState("Routine follow-up");
@@ -142,8 +145,18 @@ const VideoConsultation = () => {
                     const doctorUserId = doctor.userId || doctor.id;
                     const channelName = `patient-${patientId}-doctor-${doctorUserId}`;
                     
+                    // Send call notification to doctor via Socket.IO
+                    if (doctorUserId && initiateCall) {
+                      initiateCall(
+                        doctorUserId.toString(),
+                        channelName,
+                        user?.name || 'Patient',
+                        'patient-to-doctor'
+                      );
+                    }
+                    
                     // Navigate to video call with channel and participant name
-                    window.location.href = `/video-call?channel=${channelName}&name=${doctor.name || 'Doctor'}`;
+                    navigate(`/video-call?channel=${channelName}&name=${doctor.name || 'Doctor'}`);
                   }}
                   disabled={!selectedDoctor}
                   className="rounded-full bg-primary py-3 font-semibold text-white hover:bg-secondary disabled:opacity-60 disabled:cursor-not-allowed"
