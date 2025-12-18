@@ -50,10 +50,19 @@ const VideoCall = () => {
 
             if (mediaType === "video") {
                 // Don't add local user to remote users list
-                if (user.uid === localUid) {
-                    console.log("   ⚠️ Ignoring local user's video track (already shown in preview)");
-                    return;
+                // Only filter if localUid is set and matches
+                if (localUid !== null) {
+                    const localUidStr = String(localUid);
+                    const userUidStr = String(user.uid);
+                    if (localUidStr === userUidStr) {
+                        console.log("   ⚠️ Ignoring local user's video track (already shown in preview)");
+                        console.log("   Local UID:", localUid, "User UID:", user.uid);
+                        return;
+                    }
                 }
+                
+                console.log("   ✅ This is a remote user, processing video track");
+                console.log("   Local UID:", localUid, "Remote UID:", user.uid);
                 
                 // Check if video track is available
                 if (user.videoTrack) {
@@ -62,7 +71,7 @@ const VideoCall = () => {
                     setTimeout(() => {
                         setUsers((prevUsers) => {
                             // Avoid duplicates
-                            if (prevUsers.find(u => u.uid === user.uid)) {
+                            if (prevUsers.find(u => String(u.uid) === String(user.uid))) {
                                 console.log("⚠️ User already in list:", user.uid);
                                 return prevUsers;
                             }
@@ -81,7 +90,7 @@ const VideoCall = () => {
                     console.warn("   ⚠️ User published video but track is not available yet:", user.uid);
                     // Still add user to list, VideoPlayer will wait for track
                     setUsers((prevUsers) => {
-                        if (prevUsers.find(u => u.uid === user.uid)) {
+                        if (prevUsers.find(u => String(u.uid) === String(user.uid))) {
                             return prevUsers;
                         }
                         console.log("➕ Adding user to list (waiting for video track):", user.uid);
@@ -246,7 +255,7 @@ const VideoCall = () => {
             setLocalUid(uid); // Store local UID to filter it out from remote users
             console.log("✅ Joined channel successfully!");
             console.log("   Channel:", channelName);
-            console.log("   Local UID:", uid);
+            console.log("   Local UID:", uid, "(type:", typeof uid, ")");
             console.log("   App ID:", appId);
 
             // Create local audio and video tracks (following Agora docs)
@@ -269,11 +278,14 @@ const VideoCall = () => {
             if (remoteUsers.length > 0) {
                 console.log("   Found existing remote users, subscribing...");
                 for (const remoteUser of remoteUsers) {
-                    // Skip local user
-                    if (remoteUser.uid === uid) {
+                    // Skip local user - compare as strings to handle type mismatches
+                    if (String(remoteUser.uid) === String(uid)) {
                         console.log("   ⚠️ Skipping local user in remote users list");
+                        console.log("   Local UID:", uid, "Remote UID:", remoteUser.uid);
                         continue;
                     }
+                    
+                    console.log("   ✅ Processing remote user:", remoteUser.uid);
                     
                     try {
                         // Subscribe to video if available
